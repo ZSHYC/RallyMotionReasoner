@@ -1,7 +1,7 @@
 :root {
   /* Most visual adjustments can be made here. */
-  --page-width: 1480px;
-  --figure-width: 1400px;
+  --page-width: 1180px;
+  --figure-width: 1100px;
   --title-size: 84px;
   --subtitle-size: 34px;
   --body-size: 18px;
@@ -17,20 +17,20 @@ a { color: inherit; text-decoration: none; }
 
 .hero { padding: 88px 0 56px; text-align: center; }
 h1 { margin: 0; font-size: clamp(56px, 8vw, var(--title-size)); line-height: 1; letter-spacing: -.055em; }
-.subtitle { max-width: 1400px; margin: 22px auto 0; font: var(--subtitle-size)/1.2 Georgia, "Times New Roman", serif; }
+.subtitle { max-width: 1100px; margin: 22px auto 0; font: var(--subtitle-size)/1.2 Georgia, "Times New Roman", serif; }
 .authors { margin: 27px 0 0; color: var(--link-color); font-size: 22px; line-height: 1.7; }
 .authors a { text-decoration: underline; text-underline-offset: 3px; }
 sup { font-size: .65em; }
-.affiliations { margin: 3px 0 0; color: #666; font-size: 13px; line-height: 1.5; }
+.affiliations { margin: 3px 0 0; color: #666; font-size: 22px; line-height: 1.5; }
 .links { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
-.links a { padding: 11px 18px; border-radius: 22px; background: #363636; color: #fff; font-size: 13px; font-weight: 700; }
+.links a { padding: 11px 18px; border-radius: 22px; background: #363636; color: #fff; font-size: 20px; font-weight: 700; }
 .links a:hover { background: #111; }
 
 section { padding-top: var(--section-gap); }
 h2 { margin: 0; text-align: center; font: 700 34px/1.2 Georgia, "Times New Roman", serif; }
-.abstract { max-width: 1400px; padding-top: 42px; }
+.abstract { max-width: 1100px; padding-top: 42px; }
 .abstract p { margin: 18px 0 0; font: var(--body-size)/1.65 Georgia, "Times New Roman", serif; text-align: justify; }
-.description { max-width: 1400px; margin: 14px auto 0; color: #5d5d5d; font: 17px/1.5 Georgia, "Times New Roman", serif; text-align: center; }
+.description { max-width: 1100px; margin: 14px auto 0; color: #5d5d5d; font: 17px/1.5 Georgia, "Times New Roman", serif; text-align: center; }
 
 figure {
   width: min(var(--figure-width), 100%);
