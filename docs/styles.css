@@ -1,12 +1,12 @@
 :root {
   /* Most visual adjustments can be made here. */
-  --page-width: 980px;
-  --figure-width: 940px;
+  --page-width: 1480px;
+  --figure-width: 1440px;
   --title-size: 84px;
   --subtitle-size: 34px;
   --body-size: 18px;
   --section-gap: 76px;
-  --link-color: #3273dc;
+  --link-color: #172234;
 }
 
 * { box-sizing: border-box; }
