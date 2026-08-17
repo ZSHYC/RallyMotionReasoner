@@ -45,6 +45,14 @@ figure img {
   height: auto;
   margin: 0 auto;
 }
+.demo-figure {
+  width: min(1080px, 100%);
+}
+.demo-figure video {
+  display: block;
+  width: 100%;
+  height: auto;
+}
 
 .bibtex { padding-bottom: 70px; }
 pre { margin: 20px 0 0; padding: 22px; overflow: auto; border-radius: 5px; background: #f5f5f5; font: 13px/1.65 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; }
