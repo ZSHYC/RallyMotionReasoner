@@ -22,6 +22,7 @@ h1 { margin: 0; font-size: clamp(56px, 8vw, var(--title-size)); line-height: 1; 
 .authors a { text-decoration: underline; text-underline-offset: 3px; }
 sup { font-size: .65em; }
 .affiliations { margin: 3px 0 0; color: #666; font-size: 22px; line-height: 1.5; }
+.author-notes { margin: 5px 0 0; color: #777; font-size: 16px; line-height: 1.4; }
 .links { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
 .links a { padding: 11px 18px; border-radius: 22px; background: #363636; color: #fff; font-size: 20px; font-weight: 700; }
 .links a:hover { background: #111; }
@@ -66,6 +67,7 @@ footer { margin-top: 0; padding: 25px 0 40px; border-top: 1px solid #e8e8e8; col
   }
   .hero { padding-top: 62px; }
   .authors { font-size: 15px; }
+  .author-notes { font-size: 13px; }
   .abstract p { text-align: left; }
   h2 { font-size: 29px; }
   figure { width: 100%; }
