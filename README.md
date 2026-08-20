@@ -9,9 +9,6 @@
   <img src="https://img.shields.io/badge/Models-Coming_Soon-64748b?style=for-the-badge" alt="Models coming soon">
 </p>
 
-<p align="center">
-  Official implementation of <b>TennisVAR: A Stroke-Evidence-Grounded Multimodal Large Language Model for Tactical Reasoning in Tennis Videos</b>.
-</p>
 
 ## 🎬 TennisVAR in Action
 
@@ -99,10 +96,7 @@ tennisvar predict \
   --output result.json
 ```
 
-<details>
-<summary><b>Training commands</b></summary>
-
-The checked-in defaults match the paper: EPM is trained for 40 epochs, TGTR for 120 epochs, and Qwen3-VL-8B uses rank-32 LoRA for 5 epochs.
+EPM is trained for 40 epochs, TGTR for 120 epochs, and Qwen3-VL-8B uses rank-32 LoRA for 5 epochs.
 
 ```bash
 PYTHONPATH=src python scripts/train_tgtr.py \
