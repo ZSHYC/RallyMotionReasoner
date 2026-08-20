@@ -1,0 +1,14 @@
+# Copy this file to configs/paths.local.yaml. The local file is git-ignored.
+project_root: /path/to/TennisVAR
+data_root: /path/to/trace
+source_data_root: /path/to/trace/annotations
+frame_root: /path/to/trace/frames_224
+video_root: /path/to/authorized/tennis/videos
+artifacts_root: /path/to/tennisvar/artifacts
+reports_root: /path/to/tennisvar/reports
+runs_root: /path/to/tennisvar/runs
+outputs_root: /path/to/tennisvar/outputs
+qwen3_vl_model: /path/to/Qwen3-VL-8B-Instruct
+dinov3_repo: /path/to/dinov3/repository
+dinov3_weights: /path/to/dinov3/weights.pth
+ball_track_root: /path/to/authorized/tracknet/outputs

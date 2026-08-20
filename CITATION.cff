@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use TennisVAR, please cite the paper."
+title: "TennisVAR: A Stroke-Evidence-Grounded Multimodal Large Language Model for Tactical Reasoning in Tennis Videos"
+type: software
+version: 0.1.0
+date-released: 2026-08-20
+url: "https://whynotgit2025.github.io/TennisVAR/"
+repository-code: "https://github.com/WhynotGit2025/TennisVAR"
+authors:
+  - family-names: Mei
+    given-names: Yifan
+  - family-names: Shi
+    given-names: Qingling
+  - family-names: Wu
+    given-names: Changli
+  - family-names: Rao
+    given-names: Jiayuan
+  - family-names: Ji
+    given-names: Jiayi
+  - family-names: Cao
+    given-names: Liujuan

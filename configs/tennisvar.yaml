@@ -1,0 +1,72 @@
+experiment_name: tennisvar_tgtr
+architecture: TennisVAR-TGTR
+seed: 42
+
+event_parsing:
+  appearance_dim: 768
+  motion_dim: 24
+  ball_dim: 8
+  fused_dim: 800
+  hidden_dim: 256
+  num_layers: 3
+  num_heads: 8
+  epochs: 40
+  batch_size: 64
+  learning_rate: 0.0002
+  require_tracknet: true
+
+data:
+  dataset: trace
+  graph_source: f3ed
+  include_label_tokens: false
+  require_visual_features: true
+  use_edges: true
+  max_question_tokens: 64
+  max_node_tokens: 24
+  max_strokes: 32
+  min_count: 1
+  label_map_source: train
+  evidence_frame_tolerance: 16
+
+module_flags:
+  reasoner: graph_transformer_with_router
+  vlm_adapter: structured_prompt
+
+model:
+  hidden_dim: 256
+  num_layers: 2
+  num_heads: 8
+  dropout: 0.12
+
+feature_extraction:
+  feature_set: f3ed_event_features
+  feature_dim: 800
+  motion_feature_dim: 0
+  feature_root_name: trace/tgtr_event_features
+
+training:
+  epochs: 120
+  batch_size: 64
+  lr: 0.0015
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  amp: true
+  evidence_threshold_grid: [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
+
+loss_weights:
+  evidence: 2.0
+  key_action: 2.0
+  level_1: 1.0
+  level_2: 1.0
+  level_3: 1.0
+  answer_type: 0.5
+  answerability: 0.5
+  causal_strength: 0.5
+  observed_effect: 0.5
+
+generation:
+  model: Qwen3-VL-8B-Instruct
+  lora_rank: 32
+  epochs: 5
+  learning_rate: 0.00002
+  effective_batch_size: 32
