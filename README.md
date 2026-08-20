@@ -1,41 +1,48 @@
-# TennisVAR
+# TennisVAR: Stroke-Evidence-Grounded Tactical Reasoning for Tennis Videos
 
-[![Project page](https://img.shields.io/badge/project-page-2f6f4e)](https://whynotgit2025.github.io/TennisVAR/)
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![License](https://img.shields.io/badge/code-Apache--2.0-blue)](LICENSE)
+Official implementation of **TennisVAR: A Stroke-Evidence-Grounded Multimodal Large Language Model for Tactical Reasoning in Tennis Videos**.
 
-Official core implementation of **TennisVAR: A Stroke-Evidence-Grounded Multimodal Large Language Model for Tactical Reasoning in Tennis Videos**.
+<p align="center">
+  <a href="https://whynotgit2025.github.io/TennisVAR/"><b>Project Page</b></a> ·
+  <a href="https://arxiv.org/abs/2608.12920"><b>Paper</b></a> ·
+  <b>Dataset (Coming Soon)</b> ·
+  <b>Checkpoints (Coming Soon)</b>
+</p>
 
-TennisVAR follows an `event -> relation -> evidence -> tactic` pipeline. The Event Parsing Module (EPM) converts a rally into contact-centered stroke events. The Tactical Graph-Guided Temporal Reasoner (TGTR) connects adjacent strokes and same-player decisions, routes question-relevant evidence, and predicts hierarchical tactics. Qwen3-VL realizes the grounded answer from sparse global frames, local evidence windows, and the predicted event table.
+<p align="center">
+  <img src="docs/public/tennisvar-figure.png" width="92%" alt="TennisVAR architecture">
+</p>
 
-## Release status
+TennisVAR reasons through a rally using an **event → relation → evidence → tactic** pipeline. It first parses contact-centered stroke events, models temporal and same-player dependencies, selects question-relevant evidence, and finally generates a grounded tactical answer.
 
-| Component | Status |
-| --- | --- |
-| Core EPM, TGTR, Evidence Router and Qwen3-VL integration | Available |
-| TRACE annotations and split metadata | Release under review |
-| Tennis broadcast videos | Not distributed |
-| Pretrained EPM, TGTR and LoRA weights | Coming soon |
-| Paper | Coming soon |
+## News
 
-The data release is being designed separately because professional match footage may be subject to third-party rights. See [DATA_AND_MODELS.md](DATA_AND_MODELS.md) before opening a data-related issue.
+- **[2026.08]** 🎾 Core model code and training interfaces are released.
+- **[2026.08]** 📄 The TennisVAR preprint is available on [arXiv](https://arxiv.org/abs/2608.12920).
+- **Coming next:** TRACE release plan and pretrained checkpoints.
 
-## Open-source scope
+## Highlights
 
-This repository contains the paper-facing model code, training entry points, configuration, artifact validation, and tests. It does not contain tournament footage, extracted frames, TRACE annotations, checkpoints, cached features, experiment sweeps, or evaluation outputs.
+- **TRACE:** 11,189 rally videos with stroke events, tactical units, grounded questions, and ordered evidence chains.
+- **EPM:** converts continuous rallies into explicit stroke-event sequences anchored at racket-ball contact frames.
+- **TGTR:** models rally progression and same-player decision dependencies with an Evidence Router.
+- **Grounded generation:** Qwen3-VL answers from sparse global frames, local evidence windows, and predicted events.
+
+## Repository
 
 ```text
-configs/tennisvar.yaml                 paper configuration
-scripts/train_tgtr.py                  TGTR training entry point
-scripts/train_qwen_lora.py             Qwen3-VL LoRA training entry point
-src/tennisvar/event_parsing/           EPM and event decoding
-src/tennisvar/tactical_reasoning/      TGTR and Evidence Router
-src/tennisvar/generation/              grounded answer generation
-src/tennisvar/data/                    TRACE-compatible data interfaces
-docs/                                  GitHub Pages project website
+configs/                 Paper-aligned configuration
+scripts/                 TGTR and Qwen3-VL training entry points
+src/tennisvar/           Core EPM, TGTR and generation code
+tests/                    Lightweight unit tests
+docs/                     Project website
 ```
 
-## Installation
+## Requirements
+
+- Python >= 3.10
+- PyTorch >= 2.1
+- CUDA is required for Qwen3-VL LoRA training
 
 ```bash
 git clone https://github.com/WhynotGit2025/TennisVAR.git
@@ -47,30 +54,28 @@ python -m pip install -e '.[train,generation,video]'
 cp configs/paths.example.yaml configs/paths.local.yaml
 ```
 
-Edit `configs/paths.local.yaml` to reference assets that you are authorized to use. DINOv3 and Qwen3-VL remain external dependencies. TrackNet is integrated through a trajectory JSON interface; third-party TrackNet code and weights are not redistributed here.
+Update `configs/paths.local.yaml` with your local DINOv3, Qwen3-VL, data, and artifact paths.
 
-## Paper configuration
+## Inference
 
-The checked-in configuration matches the method description:
-
-- EPM input: 768-D DINOv3 appearance + 24-D motion + 8-D ball trajectory = 800-D.
-- EPM training: 40 epochs, batch size 64, AdamW learning rate `2e-4`.
-- TGTR: 256-D hidden states with temporal and same-player relations.
-- TGTR training: 120 epochs, batch size 64, AdamW learning rate `1.5e-3`.
-- Evidence and key-action loss weights: `2.0`; three tactic-level weights: `1.0`.
-- Generator: Qwen3-VL-8B with rank-32 LoRA for 5 epochs at `2e-5`, effective batch size 32.
-
-## Commands
-
-The commands below require the unreleased checkpoints and compatible data artifacts. They are provided now so the public interfaces remain reviewable.
+The public interface is ready, while pretrained checkpoints are still being prepared for release.
 
 ```bash
-tennisvar predict-events \
-  --video /path/to/authorized/rally.mp4 \
-  --ball-track /path/to/tracknet/trajectory.json \
-  --checkpoint /path/to/epm.pt \
-  --output outputs/events.json
+tennisvar predict \
+  --video /path/to/rally.mp4 \
+  --ball-track /path/to/trajectory.json \
+  --event-checkpoint /path/to/epm.pt \
+  --tgtr-checkpoint /path/to/tgtr.pt \
+  --qwen-model /path/to/Qwen3-VL-8B-Instruct \
+  --question "How did the player create the winning opportunity?" \
+  --output result.json
+```
 
+## Training
+
+The checked-in defaults match the paper: EPM is trained for 40 epochs, TGTR for 120 epochs, and Qwen3-VL-8B uses rank-32 LoRA for 5 epochs.
+
+```bash
 PYTHONPATH=src python scripts/train_tgtr.py \
   --experiment-config configs/tennisvar.yaml
 
@@ -79,30 +84,27 @@ PYTHONPATH=src torchrun --nproc-per-node=8 scripts/train_qwen_lora.py \
   --train-data /path/to/train.jsonl \
   --val-data /path/to/val.jsonl \
   --output-dir runs/qwen_lora \
-  --report outputs/qwen_lora.json \
-  --epochs 5 --learning-rate 2e-5 --lora-rank 32
+  --report outputs/qwen_lora.json
 ```
 
-## Development
+## Data and Checkpoints
 
-```bash
-python -m pip install -e '.[dev,train]'
-ruff check .
-pytest
-```
-
-Contributions should not include match videos, extracted frames, private annotations, credentials, local paths, or model weights. See [CONTRIBUTING.md](CONTRIBUTING.md).
+TRACE annotations and pretrained weights are not included yet. Professional tennis broadcasts may be controlled by third-party rights holders, so we are evaluating a research-friendly release that does not redistribute protected footage. Release updates will be posted here.
 
 ## Citation
 
 ```bibtex
 @article{mei2026tennisvar,
-  title  = {TennisVAR: A Stroke-Evidence-Grounded Multimodal Large Language Model for Tactical Reasoning in Tennis Videos},
-  author = {Mei, Yifan and Shi, Qingling and Wu, Changli and Rao, Jiayuan and Ji, Jiayi and Cao, Liujuan},
-  year   = {2026}
+  title   = {TennisVAR: A Stroke-Evidence-Grounded Multimodal Large Language Model for Tactical Reasoning in Tennis Videos},
+  author  = {Mei, Yifan and Shi, Qingling and Wu, Changli and Rao, Jiayuan and Ji, Jiayi and Cao, Liujuan},
+  journal = {arXiv preprint arXiv:2608.12920},
+  year    = {2026}
 }
 ```
 
-## License
+## TODO
 
-The source code is released under the [Apache License 2.0](LICENSE). This license does not grant rights to tennis broadcasts, TRACE data, third-party model weights, or external dependencies.
+- [x] Release the paper and project page
+- [x] Release the core implementation
+- [ ] Release pretrained checkpoints
+- [ ] Announce the TRACE access procedure

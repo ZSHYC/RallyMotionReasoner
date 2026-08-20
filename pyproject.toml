@@ -8,7 +8,6 @@ version = "0.1.0"
 description = "Stroke-evidence-grounded tactical reasoning for tennis videos"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
 authors = [
   {name = "Yifan Mei"},
   {name = "Qingling Shi"},
@@ -20,7 +19,6 @@ authors = [
 keywords = ["tennis", "video understanding", "multimodal reasoning", "evidence grounding"]
 classifiers = [
   "Development Status :: 3 - Alpha",
-  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
