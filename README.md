@@ -3,6 +3,23 @@
 <h3 align="center">Stroke-Evidence-Grounded Tactical Reasoning for Tennis Videos</h3>
 
 <p align="center">
+  <a href="https://scholar.google.com/citations?user=QJSp3NUAAAAJ">Yifan Mei</a><sup>1</sup>,
+  Qinglin Shi<sup>1</sup>,
+  <a href="https://scholar.google.com/citations?user=K13qHZoAAAAJ">Changli Wu</a><sup>1,2,†</sup>,
+  <a href="https://scholar.google.com/citations?user=oW6qV1oAAAAJ">Jiayuan Rao</a><sup>3</sup>,
+  <a href="https://scholar.google.com/citations?user=xp_rICcAAAAJ">Jiayi Ji</a><sup>1</sup>,
+  <a href="https://scholar.google.com/citations?user=iYEcVaAAAAAJ">Liujuan Cao</a><sup>1,*</sup>
+</p>
+
+<p align="center">
+  <sup>1</sup> Xiamen University &nbsp; · &nbsp;
+  <sup>2</sup> Shanghai Innovation Institute &nbsp; · &nbsp;
+  <sup>3</sup> Shanghai Jiao Tong University
+  <br>
+  <sup>†</sup> Project leader &nbsp; · &nbsp; <sup>*</sup> Corresponding author
+</p>
+
+<p align="center">
   <a href="https://whynotgit2025.github.io/TennisVAR/"><img src="https://img.shields.io/badge/Project-Page-2f7d4f?style=for-the-badge" alt="Project Page"></a>
   <a href="https://arxiv.org/abs/2608.12920"><img src="https://img.shields.io/badge/arXiv-2608.12920-b31b1b?style=for-the-badge" alt="Paper"></a>
   <img src="https://img.shields.io/badge/TRACE-Coming_Soon-f0a202?style=for-the-badge" alt="Dataset coming soon">
