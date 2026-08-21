@@ -18,13 +18,27 @@ a { color: inherit; text-decoration: none; }
 .hero { padding: 88px 0 56px; text-align: center; }
 h1 { margin: 0; font-size: clamp(56px, 8vw, var(--title-size)); line-height: 1; letter-spacing: -.055em; }
 .subtitle { max-width: 1000px; margin: 22px auto 0; font: var(--subtitle-size)/1.2 Georgia, "Times New Roman", serif; }
-.authors { margin: 27px 0 0; color: var(--link-color); font-size: 22px; line-height: 1.7; }
+.authors { margin: 27px 0 0; color: var(--link-color); font-size: 1.25rem; line-height: 1.7; }
 .authors a { text-decoration: underline; text-underline-offset: 3px; }
 sup { font-size: .65em; }
-.affiliations { margin: 3px 0 0; color: #666; font-size: 22px; line-height: 1.5; }
-.author-notes { margin: 5px 0 0; color: #777; font-size: 16px; line-height: 1.4; }
+.affiliations { margin: 3px 0 0; color: #666; font-size: 1.25rem; line-height: 1.5; }
+.author-notes { margin: 5px 0 0; color: #777; font-size: .9rem; line-height: 1.4; }
 .links { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
-.links a { padding: 11px 18px; border-radius: 22px; background: #363636; color: #fff; font-size: 20px; font-weight: 700; }
+.links a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 22px;
+  background: #363636;
+  color: #fff;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+}
 .links a:hover { background: #111; }
 
 section { padding-top: var(--section-gap); }
@@ -66,8 +80,7 @@ footer { margin-top: 0; padding: 25px 0 40px; border-top: 1px solid #e8e8e8; col
     --section-gap: 56px;
   }
   .hero { padding-top: 62px; }
-  .authors { font-size: 15px; }
-  .author-notes { font-size: 13px; }
+  .author-notes { font-size: .8rem; }
   .abstract p { text-align: left; }
   h2 { font-size: 29px; }
   figure { width: 100%; }
