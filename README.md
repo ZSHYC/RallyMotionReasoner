@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://scholar.google.com/citations?user=QJSp3NUAAAAJ">Yifan Mei</a><sup>1</sup>,
-  Qinglin Shi<sup>1</sup>,
+  Qingling Shi<sup>1</sup>,
   <a href="https://scholar.google.com/citations?user=K13qHZoAAAAJ">Changli Wu</a><sup>1,2,†</sup>,
   <a href="https://scholar.google.com/citations?user=oW6qV1oAAAAJ">Jiayuan Rao</a><sup>3</sup>,
   <a href="https://scholar.google.com/citations?user=xp_rICcAAAAJ">Jiayi Ji</a><sup>1</sup>,
