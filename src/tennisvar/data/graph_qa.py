@@ -9,10 +9,10 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from tennisvar.evaluation.matching import optimal_temporal_matching
 from tennisvar.io import read_jsonl
 from tennisvar.schema_v2 import ANSWER_TYPES, ANSWERABILITY, CAUSAL_STRENGTHS, OBSERVED_EFFECTS, answer_payload
 from tennisvar.tactical_reasoning.graph_transformer import EDGE_TYPE_TO_ID
-from tennisvar.evaluation.matching import optimal_temporal_matching
 
 # Keep Latin words intact while giving CJK text character-level coverage.
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u3400-\u4dbf\u4e00-\u9fff]")
@@ -90,6 +90,11 @@ def read_visual_supervision(path: Path | None) -> dict[str, dict[int, dict[str, 
 def feature_tokens_for_shot(shot: dict[str, Any], index: int, total: int, *, include_label_tokens: bool = True) -> list[str]:
     parsed = shot.get("parsed") or {}
     tokens = [f"shot_pos:{index + 1}", f"shot_count:{total}"]
+    for prefix in ("before", "after"):
+        gap = shot.get(f"bounce_{prefix}_gap")
+        if gap is not None:
+            tokens.append(f"bounce_{prefix}:1")
+            tokens.append(f"bounce_{prefix}_gap:{min(int(gap) // 4, 8)}")
     if not include_label_tokens:
         return tokens
     for key in ["hitter", "court_zone", "phase", "hand", "technique", "direction", "outcome", "outcome_label"]:

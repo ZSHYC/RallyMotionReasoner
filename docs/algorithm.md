@@ -41,6 +41,10 @@ stored beside the graph for temporal supervision and later contact-aware
 extensions. This prevents a ball-ground interaction from being mistaken for a
 player action or corrupting same-player relations.
 
+For region graphs, the nearest preceding and following bounce gaps are also
+encoded as structural stroke tokens. TGTR can use bounce timing as context
+without adding bounce nodes or changing player-relation semantics.
+
 `RegionFusionEventModel` adds bidirectional motion-to-region and
 region-to-motion cross-attention plus the existing attribute heads. It is the
 trainable upgrade for future region-based EPM training; published expert

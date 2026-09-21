@@ -55,6 +55,18 @@ def build_predicted_graph(
     graph["graph_source"] = "f3ed_predicted"
     graph["event_detector"] = "region_fusion" if any(event.source == "region_fusion" for event in events) else "f3ed"
     graph["bounce_events"] = record["bounce_events"]
+    for stroke in graph.get("strokes") or []:
+        frame = int(stroke["frame"])
+        before = [event for event in bounce_events if event.frame <= frame]
+        after = [event for event in bounce_events if event.frame >= frame]
+        if before:
+            event = max(before, key=lambda item: item.frame)
+            stroke["bounce_before_gap"] = frame - event.frame
+            stroke["bounce_before_confidence"] = event.confidence
+        if after:
+            event = min(after, key=lambda item: item.frame)
+            stroke["bounce_after_gap"] = event.frame - frame
+            stroke["bounce_after_confidence"] = event.confidence
     for stroke, event in zip(graph.get("strokes") or [], hit_events):
         stroke["confidence"] = event.confidence
         stroke["attribute_confidence"] = event.attribute_confidence

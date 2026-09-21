@@ -141,6 +141,7 @@ def test_region_motion_contract_and_bounce_graph_cue() -> None:
     graph = build_predicted_graph([hit, bounce], rally_id="r", frames_dir=Path("."), fps=25.0, num_frames=8)
     assert len(graph["strokes"]) == 1
     assert graph["bounce_events"][0]["frame"] == 5
+    assert graph["strokes"][0]["bounce_after_gap"] == 1
 
 
 def test_region_cross_modal_heads_have_expected_outputs() -> None:
