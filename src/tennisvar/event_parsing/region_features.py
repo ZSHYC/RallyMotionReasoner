@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import json
 import math
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +12,51 @@ from typing import Any
 import numpy as np
 
 from .features import DinoMotionFeatureExtractor, FeatureProvenance
+
+
+def load_track_payload(path: Path) -> dict[str, Any]:
+    """Load TennisVAR JSON tracks or the external TrackNet CSV contract."""
+    if path.suffix.lower() != ".csv":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("ball track JSON must be an object")
+        return payload
+    points: list[dict[str, Any]] = []
+    width = height = None
+    previous_frame = -1
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        required = {"frame_number", "detected", "x_orig", "y_orig", "width", "height"}
+        missing = sorted(required - set(reader.fieldnames or []))
+        if missing:
+            raise ValueError(f"TrackNet CSV is missing fields: {missing}: {path}")
+        for line, row in enumerate(reader, start=2):
+            try:
+                frame = int(row["frame_number"])
+                detected = int(row["detected"])
+                row_width, row_height = int(row["width"]), int(row["height"])
+                x = float(row["x_orig"]) if detected else None
+                y = float(row["y_orig"]) if detected else None
+                confidence = float(row.get("conf") or 0.0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"invalid TrackNet CSV row: {path}:{line}") from exc
+            if detected not in {0, 1} or row_width <= 0 or row_height <= 0:
+                raise ValueError(f"invalid TrackNet CSV geometry/detection: {path}:{line}")
+            if frame < 0 or frame <= previous_frame:
+                raise ValueError(f"TrackNet CSV frames must be strictly increasing: {path}:{line}")
+            if detected and (x is None or y is None or not (0.0 <= x < row_width and 0.0 <= y < row_height)):
+                raise ValueError(f"TrackNet CSV coordinates are invalid: {path}:{line}")
+            if not all(math.isfinite(value) for value in (confidence, *(value for value in (x, y) if value is not None))):
+                raise ValueError(f"TrackNet CSV values must be finite: {path}:{line}")
+            if width is None:
+                width, height = row_width, row_height
+            if (row_width, row_height) != (width, height):
+                raise ValueError(f"TrackNet CSV changes resolution: {path}:{line}")
+            points.append({"frame": frame, "ball_x": x, "ball_y": y, "confidence": confidence, "visible": bool(detected)})
+            previous_frame = frame
+    if not points:
+        raise ValueError(f"TrackNet CSV is empty: {path}")
+    return {"width": width, "height": height, "points": points, "source": "tracknet_csv"}
 
 
 def _trajectory_rows(

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from tennisvar.config import DEFAULT_CONFIG, load_paths
-from tennisvar.io import read_json, write_json
+from tennisvar.io import write_json
 
 
 def _path(args: argparse.Namespace, paths: dict[str, Path], name: str) -> Path:
@@ -142,6 +142,7 @@ def export_events(args: argparse.Namespace) -> int:
 
 
 def predict_events(args: argparse.Namespace) -> int:
+    from tennisvar.event_parsing.region_features import load_track_payload
     from tennisvar.event_parsing.runtime import build_event_predictor
     from tennisvar.media import materialize_video
 
@@ -156,7 +157,7 @@ def predict_events(args: argparse.Namespace) -> int:
         result = predictor.predict(
             media.frame_paths,
             fps=media.fps,
-            ball_track=read_json(args.ball_track) if args.ball_track else None,
+            ball_track=load_track_payload(args.ball_track) if args.ball_track else None,
         )
         payload = {
             "schema": "tennisvar.epm.prediction.v1",
@@ -245,7 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
     epm.add_argument("--checkpoint", type=Path, required=True, help="region expert directory or legacy EPM checkpoint")
     epm.add_argument("--dinov3-repo", type=Path)
     epm.add_argument("--dinov3-weights", type=Path)
-    epm.add_argument("--ball-track", type=Path, required=True)
+    epm.add_argument("--ball-track", type=Path, required=True, help="TrackNet JSON payload or external CSV")
     epm.add_argument("--device")
     epm.add_argument("--fps", type=float)
     epm.add_argument("--output", type=Path)
@@ -260,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--qwen-adapter", type=Path)
     full.add_argument("--dinov3-repo", type=Path)
     full.add_argument("--dinov3-weights", type=Path)
-    full.add_argument("--ball-track", type=Path, required=True)
+    full.add_argument("--ball-track", type=Path, required=True, help="TrackNet JSON payload or external CSV")
     full.add_argument("--device")
     full.add_argument("--fps", type=float)
     full.add_argument("--output", type=Path)

@@ -76,7 +76,9 @@ class TennisVAR:
             raise ValueError("question must be non-empty")
         with materialize_video(video, fps=fps) as media:
             if isinstance(ball_track, (str, Path)):
-                ball_track = json.loads(Path(ball_track).read_text(encoding="utf-8"))
+                from tennisvar.event_parsing.region_features import load_track_payload
+
+                ball_track = load_track_payload(Path(ball_track))
             runtime = self.event.predict(media.frame_paths, fps=media.fps, ball_track=ball_track)
             events = runtime.events
             graph_source = "f3ed_predicted"
