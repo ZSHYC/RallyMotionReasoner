@@ -1,5 +1,5 @@
 experiment_name: tennisvar_tgtr
-architecture: TennisVAR-TGTR-v2
+architecture: TennisVAR-TGTR
 seed: 42
 
 event_parsing:

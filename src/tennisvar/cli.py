@@ -142,11 +142,11 @@ def export_events(args: argparse.Namespace) -> int:
 
 
 def predict_events(args: argparse.Namespace) -> int:
-    from tennisvar.event_parsing.runtime import EventPredictor
+    from tennisvar.event_parsing.runtime import build_event_predictor
     from tennisvar.media import materialize_video
 
     paths = load_paths(args.config)
-    predictor = EventPredictor(
+    predictor = build_event_predictor(
         args.checkpoint,
         dinov3_repo=_path(args, paths, "dinov3_repo"),
         dinov3_weights=_path(args, paths, "dinov3_weights"),
@@ -240,9 +240,9 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--output", type=Path)
     export.set_defaults(handler=export_events)
 
-    epm = commands.add_parser("predict-events", help="run the Event Parsing Module")
+    epm = commands.add_parser("predict-events", help="run region-motion event detection or a legacy EPM file")
     epm.add_argument("--video", type=Path, required=True)
-    epm.add_argument("--checkpoint", type=Path, required=True)
+    epm.add_argument("--checkpoint", type=Path, required=True, help="region expert directory or legacy EPM checkpoint")
     epm.add_argument("--dinov3-repo", type=Path)
     epm.add_argument("--dinov3-weights", type=Path)
     epm.add_argument("--ball-track", type=Path, required=True)
@@ -254,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
     full = commands.add_parser("predict", help="run EPM -> TGTR -> grounded Qwen3-VL generation")
     full.add_argument("--video", type=Path, required=True)
     full.add_argument("--question", required=True)
-    full.add_argument("--event-checkpoint", type=Path, required=True)
+    full.add_argument("--event-checkpoint", type=Path, required=True, help="region expert directory or legacy EPM checkpoint")
     full.add_argument("--tgtr-checkpoint", type=Path, required=True)
     full.add_argument("--qwen-model", type=Path)
     full.add_argument("--qwen-adapter", type=Path)

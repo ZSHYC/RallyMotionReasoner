@@ -14,6 +14,7 @@ class DecodedEvent:
     attributes: dict[str, str | None]
     attribute_confidence: dict[str, float]
     source: str = "f3ed_predicted"
+    event_type: str = "hit"
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -73,6 +74,7 @@ class PeakDecoder:
                     confidence=float(scores[index]),
                     attributes=attributes,
                     attribute_confidence=confidence,
+                    event_type="hit",
                 )
             )
         return events

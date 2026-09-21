@@ -95,6 +95,9 @@ def main() -> int:
     output_dir = args.output_dir or paths["runs_root"] / default_run
     train_ds, val_ds, meta = make_graph_datasets(paths, cfg, feature_root)
     source = str(meta["graph_source"])
+    event_backend = str(cfg.get("data", {}).get("event_backend", "f3ed"))
+    if event_backend not in {"f3ed", "region_fusion"}:
+        raise ValueError(f"unsupported event backend: {event_backend}")
     data_files = {
         "train_refs": refs_file(paths, "train", cfg),
         "val_refs": refs_file(paths, "val", cfg),
@@ -114,18 +117,22 @@ def main() -> int:
         json.loads(data_files[f"{split}_feature_export"].read_text(encoding="utf-8"))
         for split in ("train", "val", "test")
     ]
-    upstream_event_hashes = {row.get("checkpoint_sha256") for row in export_reports}
-    upstream_event_fingerprints = {row.get("checkpoint_data_fingerprint") for row in export_reports}
-    if len(upstream_event_hashes) != 1 or len(upstream_event_fingerprints) != 1:
-        raise ValueError("TGTR training inputs mix F3ED checkpoints")
-    upstream_event_checkpoint_sha256 = next(iter(upstream_event_hashes))
-    upstream_event_data_fingerprint = next(iter(upstream_event_fingerprints))
-    for label, value in (
-        ("checkpoint_sha256", upstream_event_checkpoint_sha256),
-        ("data_fingerprint", upstream_event_data_fingerprint),
-    ):
-        if not isinstance(value, str) or len(value) != 64:
-            raise ValueError(f"TGTR training has invalid upstream F3ED {label}")
+    if event_backend == "f3ed":
+        upstream_event_hashes = {row.get("checkpoint_sha256") for row in export_reports}
+        upstream_event_fingerprints = {row.get("checkpoint_data_fingerprint") for row in export_reports}
+        if len(upstream_event_hashes) != 1 or len(upstream_event_fingerprints) != 1:
+            raise ValueError("TGTR training inputs mix F3ED checkpoints")
+        upstream_event_checkpoint_sha256 = next(iter(upstream_event_hashes))
+        upstream_event_data_fingerprint = next(iter(upstream_event_fingerprints))
+        for label, value in (
+            ("checkpoint_sha256", upstream_event_checkpoint_sha256),
+            ("data_fingerprint", upstream_event_data_fingerprint),
+        ):
+            if not isinstance(value, str) or len(value) != 64:
+                raise ValueError(f"TGTR training has invalid upstream F3ED {label}")
+    else:
+        upstream_event_checkpoint_sha256 = None
+        upstream_event_data_fingerprint = None
     config_hash = hashlib.sha256(json.dumps(cfg, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     data_fingerprint = hashlib.sha256(json.dumps(data_hashes, sort_keys=True).encode()).hexdigest()
     report = {
@@ -321,6 +328,7 @@ def main() -> int:
         "data_fingerprint": data_fingerprint,
         "upstream_event_checkpoint_sha256": upstream_event_checkpoint_sha256,
         "upstream_event_data_fingerprint": upstream_event_data_fingerprint,
+        "event_backend": event_backend,
         "elapsed_seconds": elapsed_before + time.time() - started,
     }
     checkpoint_payload = (
@@ -339,6 +347,7 @@ def main() -> int:
             "config": cfg,
             "architecture": cfg.get("architecture", "TennisVAR-TGTR-v2"),
             "graph_source": cfg.get("data", {}).get("graph_source", "f3ed"),
+            "event_backend": event_backend,
             "feature_root": str(feature_root),
             "seed": seed,
             "config_hash": config_hash,

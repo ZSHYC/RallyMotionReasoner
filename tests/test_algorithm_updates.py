@@ -1,9 +1,15 @@
+from pathlib import Path
+
 import numpy as np
 import torch
 
 from tennisvar.data.graph_qa import match_gold_frames_to_predicted_shots, tokenize
-from tennisvar.event_parsing.features import ball_frame_features
 from tennisvar.evaluation.event_metrics import one_to_one_match
+from tennisvar.event_parsing.decoder import DecodedEvent
+from tennisvar.event_parsing.features import ball_frame_features
+from tennisvar.event_parsing.graph import build_predicted_graph
+from tennisvar.event_parsing.region_features import _trajectory_rows, normalize_trajectory
+from tennisvar.event_parsing.region_model import RegionFusionEventModel
 from tennisvar.tactical_reasoning.model import TacticalGraphGuidedTemporalReasoner
 from tennisvar.training.eval import prf
 from tennisvar.training.losses import compute_loss
@@ -112,3 +118,35 @@ def test_tgtr_auxiliary_loss_and_multilabel_key_metric_are_finite() -> None:
     loss = compute_loss(outputs, batch, {"ball_xy": 0.25, "ball_visible": 0.25, "contact_frame": 0.25})
     assert torch.isfinite(loss)
     assert prf({1, 2}, {1, 2}) == (1.0, 1.0, 1.0)
+
+
+def test_region_motion_contract_and_bounce_graph_cue() -> None:
+    rows = _trajectory_rows(
+        {"width": 100, "height": 50, "points": [
+            {"frame": 0, "ball_x": 10, "ball_y": 20, "visible": True},
+            {"frame": 1, "ball_x": 20, "ball_y": 20, "visible": True},
+        ]},
+        [0, 1],
+        fps=25.0,
+        width=100,
+        height=50,
+    )
+    normalized = normalize_trajectory(
+        rows,
+        {"center": [0.0] * 8, "scale": [1.0] * 8, "clip": 5.0},
+    )
+    assert normalized.shape == (2, 10)
+    hit = DecodedEvent(4, 0.16, 0.8, {}, {})
+    bounce = DecodedEvent(5, 0.20, 0.7, {}, {}, event_type="bounce")
+    graph = build_predicted_graph([hit, bounce], rally_id="r", frames_dir=Path("."), fps=25.0, num_frames=8)
+    assert len(graph["strokes"]) == 1
+    assert graph["bounce_events"][0]["frame"] == 5
+
+
+def test_region_cross_modal_heads_have_expected_outputs() -> None:
+    model = RegionFusionEventModel({"hitter": {"near": 0, "far": 1}}).eval()
+    with torch.no_grad():
+        output = model(torch.randn(1, 25, 11), torch.randn(1, 49, 3840))
+    assert output["eventness_logit"].shape == (1,)
+    assert output["type_logits"].shape == (1, 2)
+    assert output["hitter_logits"].shape == (1, 2)

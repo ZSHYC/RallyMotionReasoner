@@ -34,6 +34,8 @@ def build_predicted_graph(
     height: int | None = None,
     split: str = "inference",
 ) -> dict[str, Any]:
+    hit_events = [event for event in events if getattr(event, "event_type", "hit") == "hit"]
+    bounce_events = [event for event in events if getattr(event, "event_type", "hit") == "bounce"]
     record = {
         "video": rally_id,
         "clip_id": rally_id,
@@ -41,13 +43,19 @@ def build_predicted_graph(
         "num_frames": num_frames,
         "width": width,
         "height": height,
-        "events": [{"frame": event.frame, "label": _label(event), "outcome": event.attributes.get("outcome")} for event in events],
+        "events": [{"frame": event.frame, "label": _label(event), "outcome": event.attributes.get("outcome")} for event in hit_events],
+        "bounce_events": [
+            {"frame": event.frame, "confidence": event.confidence, "time_sec": event.time_sec}
+            for event in bounce_events
+        ],
         "tactical_units": [],
         "media": {"frames_dir": str(Path(frames_dir).resolve())},
     }
     graph = build_graph(record, split)
     graph["graph_source"] = "f3ed_predicted"
-    for stroke, event in zip(graph.get("strokes") or [], events):
+    graph["event_detector"] = "region_fusion" if any(event.source == "region_fusion" for event in events) else "f3ed"
+    graph["bounce_events"] = record["bounce_events"]
+    for stroke, event in zip(graph.get("strokes") or [], hit_events):
         stroke["confidence"] = event.confidence
         stroke["attribute_confidence"] = event.attribute_confidence
         stroke["source"] = event.source

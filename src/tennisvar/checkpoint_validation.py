@@ -14,15 +14,17 @@ def _json_hash(value: Any, *, compact: bool = False) -> str:
     return hashlib.sha256(json.dumps(value, **kwargs).encode("utf-8")).hexdigest()
 
 
-def validate_tgtr_checkpoint(state: dict[str, Any], *, expected_graph_source: str | None = None) -> None:
+def validate_tgtr_checkpoint(
+    state: dict[str, Any],
+    *,
+    expected_graph_source: str | None = None,
+    expected_event_backend: str | None = None,
+) -> None:
     """Reject structurally incompatible or internally inconsistent TGTR checkpoints."""
     if not isinstance(state, dict) or state.get("schema") != TGTR_CHECKPOINT_SCHEMA:
         schema = state.get("schema") if isinstance(state, dict) else None
         raise ValueError(f"unsupported TGTR checkpoint schema: {schema}")
-    required = {
-        "model_state", "vocab", "label_maps", "config", "data_hashes", "data_fingerprint",
-        "upstream_event_checkpoint_sha256", "upstream_event_data_fingerprint",
-    }
+    required = {"model_state", "vocab", "label_maps", "config", "data_hashes", "data_fingerprint"}
     missing = sorted(required - set(state))
     if missing:
         raise ValueError(f"TGTR checkpoint is missing required fields: {missing}")
@@ -60,15 +62,26 @@ def validate_tgtr_checkpoint(state: dict[str, Any], *, expected_graph_source: st
     run_manifest = state.get("run_manifest") or {}
     if run_manifest.get("config_hash") != config_hash or run_manifest.get("data_fingerprint") != expected_fingerprint:
         raise ValueError("TGTR checkpoint run manifest does not match checkpoint hashes")
-    for field in ("upstream_event_checkpoint_sha256", "upstream_event_data_fingerprint"):
-        digest = state.get(field)
-        if (
-            not isinstance(digest, str)
-            or len(digest) != 64
-            or any(ch not in "0123456789abcdef" for ch in digest.lower())
-            or run_manifest.get(field) != digest
-        ):
-            raise ValueError(f"TGTR checkpoint has invalid upstream event lineage: {field}")
+    event_backend = str(
+        state.get("event_backend")
+        or run_manifest.get("event_backend")
+        or state["config"].get("data", {}).get("event_backend")
+        or "f3ed"
+    )
+    if expected_event_backend is not None and event_backend != expected_event_backend:
+        raise ValueError(f"TGTR event backend mismatch: {event_backend} != {expected_event_backend}")
+    if event_backend == "f3ed":
+        for field in ("upstream_event_checkpoint_sha256", "upstream_event_data_fingerprint"):
+            digest = state.get(field)
+            if (
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(ch not in "0123456789abcdef" for ch in digest.lower())
+                or run_manifest.get(field) != digest
+            ):
+                raise ValueError(f"TGTR checkpoint has invalid upstream event lineage: {field}")
+    elif event_backend != "region_fusion":
+        raise ValueError(f"unsupported TGTR event backend: {event_backend}")
     graph_source = str(state.get("graph_source") or state["config"].get("data", {}).get("graph_source") or "")
     if expected_graph_source is not None and graph_source != expected_graph_source:
         raise ValueError(f"TGTR checkpoint graph source mismatch: {graph_source} != {expected_graph_source}")

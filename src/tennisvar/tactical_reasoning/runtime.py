@@ -36,16 +36,36 @@ def runtime_feature_payload(
 class TGTRCheckpointSelector:
     name = "tgtr_checkpoint_predicted_events"
 
-    def __init__(self, checkpoint: Path, *, device: str | None = None, top_k: int = 8) -> None:
+    def __init__(
+        self,
+        checkpoint: Path,
+        *,
+        device: str | None = None,
+        top_k: int = 8,
+        event_backend: str = "f3ed",
+    ) -> None:
         import torch
 
         self.torch = torch
         self.checkpoint_path = Path(checkpoint)
         self.state = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
-        validate_tgtr_checkpoint(self.state, expected_graph_source="f3ed")
+        validate_tgtr_checkpoint(
+            self.state,
+            expected_graph_source="f3ed",
+            expected_event_backend=event_backend,
+        )
         cfg = self.state.get("config") or {}
         if str(self.state.get("graph_source") or cfg.get("data", {}).get("graph_source")) != "f3ed":
             raise ValueError("TGTR selector requires a checkpoint trained on predicted F3ED graphs")
+        self.event_backend = str(event_backend)
+        checkpoint_backend = str(
+            self.state.get("event_backend")
+            or (self.state.get("run_manifest") or {}).get("event_backend")
+            or cfg.get("data", {}).get("event_backend")
+            or "f3ed"
+        )
+        if self.event_backend == "region_fusion" and checkpoint_backend != self.event_backend:
+            raise ValueError("region event detection requires a TGTR checkpoint trained with event_backend=region_fusion")
         if bool(cfg.get("data", {}).get("include_label_tokens", True)):
             raise ValueError("TGTR main selector refuses checkpoints that consume event label text")
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))

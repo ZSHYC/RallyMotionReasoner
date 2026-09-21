@@ -22,6 +22,8 @@ class EventRuntimeOutput:
 
 
 class EventPredictor:
+    backend = "f3ed"
+
     def __init__(
         self,
         checkpoint: Path,
@@ -99,3 +101,41 @@ class EventPredictor:
         }
         events = self.decoder.decode(scores, frames, attributes, self.checkpoint["attribute_maps"], fps=fps)
         return EventRuntimeOutput(events, frames, features, scores, provenance, self.checkpoint)
+
+
+def build_event_predictor(
+    checkpoint: Path,
+    *,
+    dinov3_repo: Path,
+    dinov3_weights: Path,
+    device: str | None = None,
+    require_ball: bool = True,
+) -> Any:
+    """Build the active event detector from its artifact shape.
+
+    A region expert directory is the current detector. A legacy file remains
+    readable for existing training artifacts and is never selected for a
+    region directory by accident.
+    """
+    checkpoint = Path(checkpoint)
+    if checkpoint.is_dir():
+        from .region_runtime import RegionEventPredictor
+
+        required = (checkpoint / "trajectory_expert.pt", checkpoint / "visual_expert.pt")
+        if not all(path.is_file() for path in required):
+            raise FileNotFoundError(
+                f"region event directory must contain {required[0].name} and {required[1].name}: {checkpoint}"
+            )
+        return RegionEventPredictor(
+            checkpoint,
+            dinov3_repo=dinov3_repo,
+            dinov3_weights=dinov3_weights,
+            device=device,
+        )
+    return EventPredictor(
+        checkpoint,
+        dinov3_repo=dinov3_repo,
+        dinov3_weights=dinov3_weights,
+        device=device,
+        require_ball=require_ball,
+    )

@@ -29,21 +29,22 @@ class TennisVAR:
         qwen_adapter: Path | None = None,
         device: str | None = None,
     ) -> None:
-        from tennisvar.event_parsing.runtime import EventPredictor
+        from tennisvar.event_parsing.runtime import build_event_predictor
         from tennisvar.generation.qwen import QwenVideoBackend
         from tennisvar.tactical_reasoning.runtime import TGTRCheckpointSelector
 
-        self.event = EventPredictor(
+        self.event = build_event_predictor(
             event_checkpoint,
             dinov3_repo=dinov3_repo,
             dinov3_weights=dinov3_weights,
             device=device,
         )
-        self.selector = TGTRCheckpointSelector(tgtr_checkpoint, device=device)
-        if self.selector.state.get("upstream_event_checkpoint_sha256") != file_sha256(Path(event_checkpoint)):
-            raise ValueError("TGTR checkpoint was trained from a different F3ED checkpoint")
-        if self.selector.state.get("upstream_event_data_fingerprint") != self.event.checkpoint.get("data_fingerprint"):
-            raise ValueError("TGTR/F3ED data fingerprints do not match")
+        self.selector = TGTRCheckpointSelector(tgtr_checkpoint, device=device, event_backend=self.event.backend)
+        if self.event.backend == "f3ed":
+            if self.selector.state.get("upstream_event_checkpoint_sha256") != file_sha256(Path(event_checkpoint)):
+                raise ValueError("TGTR checkpoint was trained from a different F3ED checkpoint")
+            if self.selector.state.get("upstream_event_data_fingerprint") != self.event.checkpoint.get("data_fingerprint"):
+                raise ValueError("TGTR/F3ED data fingerprints do not match")
         self.qwen = QwenVideoBackend(qwen_model, adapter=qwen_adapter)
         self.paths = {
             "event_checkpoint": str(Path(event_checkpoint)),
@@ -53,7 +54,7 @@ class TennisVAR:
         }
         qwen_config = Path(qwen_model) / "config.json"
         self.artifact_hashes = {
-            "event_checkpoint_sha256": file_sha256(Path(event_checkpoint)),
+            "event_checkpoint_sha256": file_sha256(Path(event_checkpoint)) if Path(event_checkpoint).is_file() else None,
             "tgtr_checkpoint_sha256": file_sha256(Path(tgtr_checkpoint)),
             "qwen_model_config_sha256": file_sha256(qwen_config),
             "qwen_adapter_manifest_sha256": (
@@ -79,8 +80,6 @@ class TennisVAR:
             runtime = self.event.predict(media.frame_paths, fps=media.fps, ball_track=ball_track)
             events = runtime.events
             graph_source = "f3ed_predicted"
-            if not events:
-                raise RuntimeError("event detector produced no candidates; strict predicted mode does not synthesize fallback events")
             rally_id = Path(video).stem if Path(video).is_file() else Path(video).name
             graph = build_predicted_graph(
                 events,
@@ -89,6 +88,8 @@ class TennisVAR:
                 fps=media.fps,
                 num_frames=len(media.frame_paths),
             )
+            if not graph.get("strokes"):
+                raise RuntimeError("event detector produced no hit candidates; strict predicted mode does not synthesize fallback events")
             graph["graph_source"] = graph_source
             candidates = self.selector.select(graph, question, runtime.frame_features, runtime.frame_indices)
             if not candidates:
@@ -147,6 +148,7 @@ class TennisVAR:
                     "degraded_reason": answer.get("parse_error"),
                     "graph_source": graph_source,
                     "event_feature_backend": runtime.feature_provenance.backend,
+                    "event_detector_backend": self.event.backend,
                     "event_feature_weights_sha256": runtime.feature_provenance.weights_sha256,
                     "tracknet_checkpoint_sha256": runtime.feature_provenance.tracknet_checkpoint_sha256,
                     "tracknet_source": runtime.feature_provenance.tracknet_source,

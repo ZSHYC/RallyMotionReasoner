@@ -20,7 +20,41 @@ The graph still has the two task-defined directed relations
 `temporal_next` and `same_player_next`. The update increases how those
 relations are used rather than inventing speculative edge types.
 
-## TGTR-v2 changes
+## Region event detector
+
+The event detector accepts the `tennis-region-infer` expert directory as the
+primary EPM artifact. A directory containing `trajectory_expert.pt` and
+`visual_expert.pt` selects this detector directly; the legacy EPM file remains
+readable for old experiments.
+
+The trajectory branch represents each frame with normalized position,
+visibility, velocity, acceleration, turning, curvature, validity, and the
+sampled time offset (11 values). It reads a 0.4-second, 25-sample window. The
+visual branch encodes one full frame and four 55%-area corner crops with the
+shared DINOv3 CLS encoder, producing 3840 values per frame over a 1.6-second,
+49-sample window. Each branch predicts eventness and event type; their product
+scores are averaged 1:1 and decoded with per-class radius-5 NMS.
+
+`bounce` is retained as a physical event cue but is not turned into a stroke
+node. Predicted `hit` events remain graph stroke nodes, while bounce frames are
+stored beside the graph for temporal supervision and later contact-aware
+extensions. This prevents a ball-ground interaction from being mistaken for a
+player action or corrupting same-player relations.
+
+`RegionFusionEventModel` adds bidirectional motion-to-region and
+region-to-motion cross-attention plus the existing attribute heads. It is the
+trainable upgrade for future region-based EPM training; published expert
+weights use their exact independent heads and do not silently use untrained
+fusion parameters.
+
+The integration is based on
+[`tennis-region-infer`](https://github.com/ZSHYC/tennis-region-infer),
+Trajectory Attention/Motionformer ([arXiv:2106.05392](https://arxiv.org/abs/2106.05392)),
+and T-DEED ([arXiv:2404.05392](https://arxiv.org/abs/2404.05392)). These
+references motivate the representation and temporal design; this repository
+does not run training, inference reproduction, or report a new metric.
+
+## TGTR changes
 
 ### Stroke representation
 
@@ -94,7 +128,7 @@ null/invisible-ball handling, frame-rate-aware deltas, EPM masking and
 sinusoidal token positions, CJK tokenization, removal of train-only QA metadata,
 evidence/key subset constraints, unknown-hitter graph handling, degree-normalized
 messages, padding-safe TGTR tokens, and structured pipeline fields. These are
-kept in TGTR-v2 and form its data contract.
+kept in TGTR and form its data contract.
 
 ## Research basis and scope
 
@@ -124,9 +158,14 @@ repository reproduces their datasets, checkpoints, or reported metrics.
 
 ## Checkpoint and evaluation boundary
 
-TGTR-v2 changes parameter shapes in the graph and stroke encoders. Existing
-TGTR checkpoints therefore need to be retrained with the updated structure; no
-compatibility or migration layer is added. This repository update intentionally
-does not run training or report a new numerical result. The lightweight tests
-only check tensor contracts, masking, finite outputs, and the evidence subset
-interface.
+TGTR changes parameter shapes in the graph and stroke encoders. A TGTR
+checkpoint used with the region detector must declare
+`event_backend=region_fusion` and be trained from graphs generated with the
+same hit-node/bounce-cue contract. Existing F3ED TGTR checkpoints remain
+reserved for the legacy file backend. No migration layer or numerical result
+is claimed; lightweight checks only validate tensor contracts and graph
+semantics.
+
+For the training entry point, set `data.event_backend=region_fusion`; this
+records the detector contract in the TGTR checkpoint without adding a second
+configuration framework.

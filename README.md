@@ -72,7 +72,7 @@ TennisVAR combines three core components:
 2. **Tactical Graph-Guided Temporal Reasoner (TGTR)** models temporal and same-player relations.
 3. **Qwen3-VL Generator** turns routed visual evidence and predicted events into a grounded tactical answer.
 
-The current TGTR-v2 structure, the preceding fixes, and the research rationale are documented in
+The current TGTR structure, region-motion event detector, preceding fixes, and research rationale are documented in
 [`docs/algorithm.md`](docs/algorithm.md). It is an algorithm design update; no reproduced training result is claimed.
 
 ## 📊 Results
@@ -109,14 +109,16 @@ The inference interface is ready. Pretrained EPM, TGTR, and LoRA checkpoints are
 tennisvar predict \
   --video /path/to/rally.mp4 \
   --ball-track /path/to/trajectory.json \
-  --event-checkpoint /path/to/epm.pt \
+  --event-checkpoint /path/to/region-experts/ \
   --tgtr-checkpoint /path/to/tgtr.pt \
   --qwen-model /path/to/Qwen3-VL-8B-Instruct \
   --question "How did the player create the winning opportunity?" \
   --output result.json
 ```
 
-EPM is trained for 40 epochs, TGTR for 120 epochs, and Qwen3-VL-8B uses rank-32 LoRA for 5 epochs.
+The event checkpoint accepts a `tennis-region-infer` expert directory containing
+`trajectory_expert.pt` and `visual_expert.pt`; the legacy EPM file remains
+available for old artifacts. TGTR and Qwen3-VL training are separate stages.
 
 ```bash
 PYTHONPATH=src python scripts/train_tgtr.py \
