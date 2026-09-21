@@ -37,12 +37,12 @@ if nn is not None:
             )
             self.out = nn.Sequential(nn.LayerNorm(hidden_dim * 3), nn.Linear(hidden_dim * 3, hidden_dim), nn.GELU())
 
-        def _masked_softmax(self, logits: Tensor, mask: Tensor | None) -> Tensor:
-            if mask is None:
-                return torch.softmax(logits, dim=-1)
-            masked = logits.masked_fill(~mask.bool(), -1e4)
-            weights = torch.softmax(masked, dim=-1)
-            return weights * mask.float()
+        def _normalized_gate(self, logits: Tensor, mask: Tensor | None) -> Tensor:
+            """Turn independent evidence scores into a stable context mixture."""
+            gate = torch.sigmoid(logits)
+            if mask is not None:
+                gate = gate * mask.float()
+            return gate / gate.sum(dim=-1, keepdim=True).clamp_min(1e-6)
 
         def forward(
             self,
@@ -54,7 +54,7 @@ if nn is not None:
             enabled: bool = True,
         ) -> EvidenceRouterOutput:
             scores = self.head(stroke_tokens, question_token)
-            weights = self._masked_softmax(scores.evidence_logits, node_mask)
+            weights = self._normalized_gate(scores.evidence_logits, node_mask)
             # A decisive action is a subset of the supporting evidence. The
             # log-probability gate keeps the two heads semantically consistent
             # instead of allowing a key action outside the evidence chain.

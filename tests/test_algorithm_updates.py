@@ -49,3 +49,36 @@ def test_tgtr_padding_tokens_remain_finite() -> None:
     with torch.no_grad():
         output = model(batch)
     assert all(torch.isfinite(value).all() for value in output.values())
+
+
+def test_tgtr_consumes_structured_state_and_motion_contract() -> None:
+    model = TacticalGraphGuidedTemporalReasoner(
+        vocab_size=16,
+        label_maps={"level_1": {"A": 0}},
+        visual_feature_dim=8,
+        motion_feature_dim=3,
+        hidden_dim=32,
+        num_layers=1,
+        num_heads=4,
+        dropout=0.0,
+    ).eval()
+    batch = {
+        "question_ids": torch.tensor([[2, 3]]),
+        "node_ids": torch.tensor([[[4, 5], [6, 7]]]),
+        "node_frames": torch.tensor([[0.2, 0.8]]),
+        "visual_features": torch.randn(1, 2, 8),
+        "motion_features": torch.randn(1, 2, 3),
+        "ball_xy": torch.tensor([[[0.2, 0.3], [0.4, 0.5]]]),
+        "ball_visible": torch.tensor([[1.0, 0.7]]),
+        "ball_mask": torch.ones(1, 2),
+        "contact_frame": torch.tensor([[0.2, 0.8]]),
+        "contact_mask": torch.ones(1, 2),
+        "node_mask": torch.ones(1, 2, dtype=torch.bool),
+        "edge_index": torch.tensor([[[0, 1]]]),
+        "edge_type": torch.tensor([[0]]),
+        "edge_mask": torch.ones(1, 1, dtype=torch.bool),
+    }
+    with torch.no_grad():
+        output = model(batch)
+    assert output["evidence_logits"].shape == (1, 2)
+    assert torch.isfinite(output["evidence_logits"]).all()

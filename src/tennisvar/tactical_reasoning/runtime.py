@@ -52,10 +52,13 @@ class TGTRCheckpointSelector:
         self.top_k = int(top_k)
         self.evidence_threshold = 0.35
         self.last_predictions: dict[str, str | None] = {}
+        model_cfg = self.state.get("config", {}).get("feature_extraction", {})
+        self.motion_feature_dim = int(self.state.get("motion_feature_dim", model_cfg.get("motion_feature_dim", 0)))
         self.model = TacticalGraphGuidedTemporalReasoner(
             len(self.state["vocab"]),
             self.state["label_maps"],
             visual_feature_dim=int(self.state["visual_feature_dim"]),
+            motion_feature_dim=self.motion_feature_dim,
             hidden_dim=int(self.state.get("hidden_dim", 256)),
             num_layers=int(self.state.get("num_layers", 2)),
             num_heads=int(self.state.get("num_heads", 8)),
@@ -117,7 +120,7 @@ class TGTRCheckpointSelector:
                 split="inference",
                 feature_root=root,
                 visual_feature_dim=expected_dim,
-                motion_feature_dim=0,
+                motion_feature_dim=self.motion_feature_dim,
                 include_label_tokens=False,
                 use_edges=bool(cfg.get("data", {}).get("use_edges", True)),
                 require_visual_features=True,

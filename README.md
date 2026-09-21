@@ -72,6 +72,9 @@ TennisVAR combines three core components:
 2. **Tactical Graph-Guided Temporal Reasoner (TGTR)** models temporal and same-player relations.
 3. **Qwen3-VL Generator** turns routed visual evidence and predicted events into a grounded tactical answer.
 
+The current TGTR-v2 structure, the preceding fixes, and the research rationale are documented in
+[`docs/algorithm.md`](docs/algorithm.md). It is an algorithm design update; no reproduced training result is claimed.
+
 ## 📊 Results
 
 <p align="center">

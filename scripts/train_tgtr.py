@@ -40,10 +40,15 @@ from tennisvar.training.losses import compute_loss
 
 def build_model(cfg: dict[str, Any], vocab_size: int, label_maps: dict[str, dict[str, int]]) -> TacticalGraphGuidedTemporalReasoner:
     model_cfg = cfg.get("model", {})
+    feature_cfg = cfg.get("feature_extraction", {})
+    motion_dim = int(feature_cfg.get("motion_feature_dim", 0))
+    if str(cfg.get("module_flags", {}).get("motion_token_mode", "none")) == "none":
+        motion_dim = 0
     return TacticalGraphGuidedTemporalReasoner(
         vocab_size,
         label_maps,
-        visual_feature_dim=int(cfg.get("feature_extraction", {}).get("feature_dim", 800)),
+        visual_feature_dim=int(feature_cfg.get("feature_dim", 800)),
+        motion_feature_dim=motion_dim,
         hidden_dim=int(model_cfg.get("hidden_dim", 256)),
         num_layers=int(model_cfg.get("num_layers", 2)),
         num_heads=int(model_cfg.get("num_heads", 8)),
@@ -125,7 +130,7 @@ def main() -> int:
     data_fingerprint = hashlib.sha256(json.dumps(data_hashes, sort_keys=True).encode()).hexdigest()
     report = {
         "status": "DRY_RUN" if args.dry_run else "READY_TO_RUN",
-        "architecture": cfg.get("architecture", "TennisVAR-TGTR"),
+        "architecture": cfg.get("architecture", "TennisVAR-TGTR-v2"),
         "experiment_name": cfg.get("experiment_name"),
         "seed": seed,
         "output_dir": str(output_dir),
@@ -161,7 +166,7 @@ def main() -> int:
         write_json(
             output_dir / "model_card.json",
             {
-                "architecture": cfg.get("architecture", "TennisVAR-TGTR"),
+                "architecture": cfg.get("architecture", "TennisVAR-TGTR-v2"),
                 "purpose": f"{meta['dataset']} predicted-event tennis video-graph-language reasoning",
                 "visual_backbone": cfg.get("feature_extraction", {}).get("feature_set", "frozen_stats_v1"),
                 "qwen_lora_enabled": bool(cfg.get("module_flags", {}).get("use_qwen_lora", False)),
@@ -329,9 +334,10 @@ def main() -> int:
             "num_heads": int(cfg.get("model", {}).get("num_heads", 8)),
             "dropout": float(cfg.get("model", {}).get("dropout", 0.1)),
             "visual_feature_dim": int(cfg.get("feature_extraction", {}).get("feature_dim", 800)),
+            "motion_feature_dim": int(model.motion_feature_dim),
             "thresholds": {"evidence_threshold": best_t},
             "config": cfg,
-            "architecture": cfg.get("architecture", "TennisVAR-TGTR"),
+            "architecture": cfg.get("architecture", "TennisVAR-TGTR-v2"),
             "graph_source": cfg.get("data", {}).get("graph_source", "f3ed"),
             "feature_root": str(feature_root),
             "seed": seed,

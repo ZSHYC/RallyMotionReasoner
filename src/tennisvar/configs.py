@@ -37,8 +37,8 @@ def validate_paper_config(config: dict[str, Any]) -> None:
         errors.append("data.use_edges must be true")
     if int(features.get("feature_dim", 0)) != PAPER_FEATURE_DIM:
         errors.append(f"feature_extraction.feature_dim must be {PAPER_FEATURE_DIM}")
-    if str(flags.get("reasoner")) != "graph_transformer_with_router":
-        errors.append("module_flags.reasoner must be graph_transformer_with_router")
+    if str(flags.get("reasoner")) != "relation_temporal_graph_chain":
+        errors.append("module_flags.reasoner must be relation_temporal_graph_chain")
     if str(flags.get("vlm_adapter")) != "structured_prompt":
         errors.append("module_flags.vlm_adapter must be structured_prompt")
     if errors:
@@ -76,6 +76,9 @@ def module_summary(config: dict[str, Any]) -> dict[str, Any]:
         "event_feature_dim": config.get("feature_extraction", {}).get("feature_dim"),
         "hidden_dim": config.get("model", {}).get("hidden_dim"),
         "graph_relations": ["temporal_next", "same_player_next"],
+        "graph_attention": "relation_bias+signed_time_bias",
+        "temporal_mixer": "depthwise_k3_k5_gated",
+        "structured_state_dim": 6,
         "reasoner": config.get("module_flags", {}).get("reasoner"),
         "generator_interface": config.get("module_flags", {}).get("vlm_adapter"),
         "loss_weights": config.get("loss_weights", {}),

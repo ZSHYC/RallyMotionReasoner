@@ -1,5 +1,5 @@
 experiment_name: tennisvar_tgtr
-architecture: TennisVAR-TGTR
+architecture: TennisVAR-TGTR-v2
 seed: 42
 
 event_parsing:
@@ -29,12 +29,12 @@ data:
   evidence_frame_tolerance: 16
 
 module_flags:
-  reasoner: graph_transformer_with_router
+  reasoner: relation_temporal_graph_chain
   vlm_adapter: structured_prompt
 
 model:
   hidden_dim: 256
-  num_layers: 2
+  num_layers: 3
   num_heads: 8
   dropout: 0.12
 

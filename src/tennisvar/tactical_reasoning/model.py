@@ -16,6 +16,26 @@ from .stroke_tokenizer import StrokeEventTokenizer
 
 if nn is not None:
 
+    class MultiScaleTemporalMixer(nn.Module):
+        """Preserve contact-local detail while adding short-range context."""
+
+        def __init__(self, hidden_dim: int, dropout: float) -> None:
+            super().__init__()
+            self.short = nn.Conv1d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim)
+            self.medium = nn.Conv1d(hidden_dim, hidden_dim, 5, padding=2, groups=hidden_dim)
+            self.mix = nn.Sequential(nn.LayerNorm(hidden_dim * 2), nn.Linear(hidden_dim * 2, hidden_dim), nn.GELU())
+            self.gate = nn.Sequential(nn.LayerNorm(hidden_dim * 2), nn.Linear(hidden_dim * 2, hidden_dim), nn.Sigmoid())
+            self.dropout = nn.Dropout(dropout)
+
+        def forward(self, tokens: Tensor, mask: Tensor | None = None) -> Tensor:
+            value = tokens if mask is None else tokens * mask.unsqueeze(-1).float()
+            short = self.short(value.transpose(1, 2)).transpose(1, 2)
+            medium = self.medium(value.transpose(1, 2)).transpose(1, 2)
+            context = self.mix(torch.cat([short, medium], dim=-1))
+            gate = self.gate(torch.cat([value, context], dim=-1))
+            output = value + self.dropout(gate * context)
+            return output if mask is None else output * mask.unsqueeze(-1).float()
+
     class TacticalGraphGuidedTemporalReasoner(nn.Module):
         """Paper implementation of question-conditioned TGTR."""
 
@@ -25,6 +45,7 @@ if nn is not None:
             label_maps: dict[str, dict[str, int]],
             *,
             visual_feature_dim: int = 800,
+            motion_feature_dim: int = 0,
             hidden_dim: int = 256,
             num_layers: int = 2,
             num_heads: int = 8,
@@ -50,6 +71,18 @@ if nn is not None:
                 num_heads=max(1, min(4, num_heads)),
                 dropout=dropout,
             )
+            self.motion_feature_dim = int(motion_feature_dim)
+            self.state_adapter = nn.Sequential(
+                nn.LayerNorm(6),
+                nn.Linear(6, hidden_dim),
+                nn.GELU(),
+            )
+            self.motion_adapter = (
+                nn.Sequential(nn.LayerNorm(self.motion_feature_dim), nn.Linear(self.motion_feature_dim, hidden_dim), nn.GELU())
+                if self.motion_feature_dim > 0
+                else None
+            )
+            self.local_temporal = MultiScaleTemporalMixer(hidden_dim, dropout)
             self.stroke_tokenizer = StrokeEventTokenizer(hidden_dim, dropout=dropout)
             self.graph = TacticalGraphTransformer(hidden_dim, num_layers, num_heads, dropout)
             self.evidence_router = EvidenceRouter(hidden_dim, dropout=dropout)
@@ -81,12 +114,30 @@ if nn is not None:
             question = self.question_norm(self._sequence_embedding(batch["question_ids"]))
             semantics = self.semantic_norm(self._sequence_embedding(batch["node_ids"]))
             visual = self.visual_adapter(batch["visual_features"], batch.get("node_mask"))
+            state = torch.cat(
+                [
+                    batch.get("ball_xy", visual.new_zeros((*visual.shape[:2], 2))),
+                    batch.get("ball_visible", visual.new_zeros(visual.shape[:2])).unsqueeze(-1),
+                    batch.get("ball_mask", visual.new_zeros(visual.shape[:2])).unsqueeze(-1),
+                    batch.get("contact_frame", visual.new_zeros(visual.shape[:2])).unsqueeze(-1),
+                    batch.get("contact_mask", visual.new_zeros(visual.shape[:2])).unsqueeze(-1),
+                ],
+                dim=-1,
+            )
+            visual = visual + self.state_adapter(state)
+            if self.motion_adapter is not None and batch.get("motion_features") is not None:
+                motion = batch["motion_features"]
+                if motion.shape[-1] != self.motion_feature_dim:
+                    raise ValueError("motion feature dimension does not match TGTR configuration")
+                visual = visual + self.motion_adapter(motion)
             strokes = self.stroke_tokenizer(semantics, visual, batch["node_frames"])
+            strokes = self.local_temporal(strokes, batch.get("node_mask"))
             graph = self.graph(
                 TacticalGraphBatch(
                     node_tokens=strokes,
                     edge_index=batch["edge_index"],
                     edge_type=batch["edge_type"],
+                    node_frames=batch.get("node_frames"),
                     node_mask=batch.get("node_mask"),
                     edge_mask=batch.get("edge_mask"),
                 )
