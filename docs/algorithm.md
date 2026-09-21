@@ -170,6 +170,6 @@ reserved for the legacy file backend. No migration layer or numerical result
 is claimed; lightweight checks only validate tensor contracts and graph
 semantics.
 
-For the training entry point, set `data.event_backend=region_fusion`; this
-records the detector contract in the TGTR checkpoint without adding a second
-configuration framework.
+The training entry point accepts `data.event_backend=region_fusion` when its
+event export reports carry the same backend. It records the detector contract
+in the TGTR checkpoint without adding a second configuration framework.

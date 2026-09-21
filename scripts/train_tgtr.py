@@ -117,6 +117,9 @@ def main() -> int:
         json.loads(data_files[f"{split}_feature_export"].read_text(encoding="utf-8"))
         for split in ("train", "val", "test")
     ]
+    export_backends = {str(row.get("event_backend") or "f3ed") for row in export_reports}
+    if export_backends != {event_backend}:
+        raise ValueError(f"TGTR training inputs use event backends {sorted(export_backends)}, expected {event_backend}")
     if event_backend == "f3ed":
         upstream_event_hashes = {row.get("checkpoint_sha256") for row in export_reports}
         upstream_event_fingerprints = {row.get("checkpoint_data_fingerprint") for row in export_reports}
