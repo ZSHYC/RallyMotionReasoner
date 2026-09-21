@@ -75,6 +75,18 @@ tactical explanation needs several supporting strokes. Key-action logits remain
 conditioned by the evidence log-probability, so a decisive action stays inside
 the predicted evidence chain.
 
+The reasoner also exposes auxiliary per-stroke heads for normalized ball
+position, ball visibility, and contact frame. When visual supervision is
+available, the existing masks determine which targets contribute to the loss;
+without that supervision these terms remain inactive. Evidence and key-action
+BCE terms use a capped batch-local positive weight, which prevents sparse event
+labels from being optimized as an all-negative problem.
+
+Key actions are evaluated as a multi-label set. Thresholded key predictions
+with an argmax fallback are compared with set F1, while exact-set accuracy is
+retained as a secondary diagnostic. Model selection uses key-action F1 so its
+objective matches the target representation.
+
 ## What the preceding update fixed
 
 The previous update introduced optimal one-to-one temporal matching, explicit

@@ -5,6 +5,8 @@ from tennisvar.data.graph_qa import match_gold_frames_to_predicted_shots, tokeni
 from tennisvar.event_parsing.features import ball_frame_features
 from tennisvar.evaluation.event_metrics import one_to_one_match
 from tennisvar.tactical_reasoning.model import TacticalGraphGuidedTemporalReasoner
+from tennisvar.training.eval import prf
+from tennisvar.training.losses import compute_loss
 
 
 def test_temporal_matching_maximizes_cardinality() -> None:
@@ -81,4 +83,32 @@ def test_tgtr_consumes_structured_state_and_motion_contract() -> None:
     with torch.no_grad():
         output = model(batch)
     assert output["evidence_logits"].shape == (1, 2)
+    assert output["ball_xy"].shape == (1, 2, 2)
+    assert output["ball_visible_logits"].shape == (1, 2)
+    assert output["contact_frame"].shape == (1, 2)
     assert torch.isfinite(output["evidence_logits"]).all()
+
+
+def test_tgtr_auxiliary_loss_and_multilabel_key_metric_are_finite() -> None:
+    outputs = {
+        "evidence_logits": torch.tensor([[0.0, -1.0]]),
+        "key_action_logits": torch.tensor([[1.0, -1.0]]),
+        "ball_xy": torch.full((1, 2, 2), 0.5),
+        "ball_visible_logits": torch.zeros(1, 2),
+        "contact_frame": torch.full((1, 2), 0.5),
+        "level_1_logits": torch.zeros(1, 1),
+    }
+    batch = {
+        "evidence": torch.tensor([[1.0, 0.0]]),
+        "key": torch.tensor([[1.0, 1.0]]),
+        "node_mask": torch.ones(1, 2, dtype=torch.bool),
+        "ball_xy": torch.full((1, 2, 2), 0.5),
+        "ball_mask": torch.ones(1, 2),
+        "ball_visible": torch.ones(1, 2),
+        "contact_frame": torch.full((1, 2), 0.5),
+        "contact_mask": torch.ones(1, 2),
+        "labels": {"level_1": torch.zeros(1, dtype=torch.long)},
+    }
+    loss = compute_loss(outputs, batch, {"ball_xy": 0.25, "ball_visible": 0.25, "contact_frame": 0.25})
+    assert torch.isfinite(loss)
+    assert prf({1, 2}, {1, 2}) == (1.0, 1.0, 1.0)

@@ -56,6 +56,9 @@ training:
 loss_weights:
   evidence: 2.0
   key_action: 2.0
+  ball_xy: 0.25
+  ball_visible: 0.25
+  contact_frame: 0.25
   level_1: 1.0
   level_2: 1.0
   level_3: 1.0

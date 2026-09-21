@@ -6,8 +6,14 @@ from torch import Tensor
 from torch.nn import functional as F
 
 
-def masked_bce(logits: Tensor, targets: Tensor, mask: Tensor) -> Tensor:
+def masked_bce(logits: Tensor, targets: Tensor, mask: Tensor, *, balance: bool = False) -> Tensor:
     loss = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    if balance:
+        valid = mask.float()
+        positives = (targets * valid).sum()
+        negatives = ((1.0 - targets) * valid).sum()
+        positive_weight = (negatives / positives.clamp_min(1.0)).clamp(1.0, 20.0)
+        loss = loss * (1.0 + (positive_weight - 1.0) * targets)
     return (loss * mask.float()).sum() / mask.float().sum().clamp_min(1.0)
 
 
@@ -20,8 +26,12 @@ def masked_smooth_l1(pred: Tensor, target: Tensor, mask: Tensor) -> Tensor:
 
 def compute_loss(outputs: dict[str, Tensor], batch: dict[str, Any], loss_weights: dict[str, float] | None = None) -> Tensor:
     weights = loss_weights or {}
-    loss = float(weights.get("evidence", 2.0)) * masked_bce(outputs["evidence_logits"], batch["evidence"], batch["node_mask"])
-    loss = loss + float(weights.get("key_action", 2.0)) * masked_bce(outputs["key_action_logits"], batch["key"], batch["node_mask"])
+    loss = float(weights.get("evidence", 2.0)) * masked_bce(
+        outputs["evidence_logits"], batch["evidence"], batch["node_mask"], balance=True
+    )
+    loss = loss + float(weights.get("key_action", 2.0)) * masked_bce(
+        outputs["key_action_logits"], batch["key"], batch["node_mask"], balance=True
+    )
     if "ball_xy" in outputs and float(weights.get("ball_xy", 0.0)) > 0:
         loss = loss + float(weights.get("ball_xy", 0.0)) * masked_smooth_l1(outputs["ball_xy"], batch["ball_xy"], batch["ball_mask"])
     if "ball_visible_logits" in outputs and float(weights.get("ball_visible", 0.0)) > 0:

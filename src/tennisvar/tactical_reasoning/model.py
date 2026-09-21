@@ -86,6 +86,9 @@ if nn is not None:
             self.stroke_tokenizer = StrokeEventTokenizer(hidden_dim, dropout=dropout)
             self.graph = TacticalGraphTransformer(hidden_dim, num_layers, num_heads, dropout)
             self.evidence_router = EvidenceRouter(hidden_dim, dropout=dropout)
+            self.ball_xy_head = nn.Linear(hidden_dim, 2)
+            self.ball_visible_head = nn.Linear(hidden_dim, 1)
+            self.contact_frame_head = nn.Linear(hidden_dim, 1)
             self.heads = nn.ModuleDict({name: nn.Linear(hidden_dim, len(mapping)) for name, mapping in label_maps.items()})
 
         def _sequence_embedding(self, token_ids: Tensor) -> Tensor:
@@ -153,6 +156,9 @@ if nn is not None:
                 "key_action_logits": routed.key_action_logits,
                 "evidence_weights": routed.evidence_weights,
                 "graph_token": routed.routed_token,
+                "ball_xy": torch.sigmoid(self.ball_xy_head(graph.node_tokens)),
+                "ball_visible_logits": self.ball_visible_head(graph.node_tokens).squeeze(-1),
+                "contact_frame": torch.sigmoid(self.contact_frame_head(graph.node_tokens)).squeeze(-1),
                 **{f"{name}_logits": head(routed.routed_token) for name, head in self.heads.items()},
             }
 

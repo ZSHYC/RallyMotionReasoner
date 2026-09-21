@@ -258,7 +258,7 @@ def main() -> int:
         metrics["epoch"] = epoch
         metrics["train_loss"] = train_loss / seen if seen else 0.0
         history.append(metrics)
-        score = metrics["evidence_f1"] + metrics["key_action_accuracy"] + metrics["level_3_accuracy"]
+        score = metrics["evidence_f1"] + metrics["key_action_f1"] + metrics["level_3_accuracy"]
         if score > best_score:
             best_score = score
             best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}

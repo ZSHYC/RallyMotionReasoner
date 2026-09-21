@@ -65,6 +65,7 @@ def evaluate_internal(
     total = 0
     evidence_f1 = 0.0
     key_acc = 0.0
+    key_f1 = 0.0
     level_acc = {"level_1": 0.0, "level_2": 0.0, "level_3": 0.0}
     visual_sums = {"ball_pck@5": 0.0, "ball_pck@10": 0.0, "contact_acc@1": 0.0, "contact_acc@2": 0.0, "contact_acc@4": 0.0}
     visual_counts = {key: 0.0 for key in visual_sums}
@@ -86,9 +87,12 @@ def evaluate_internal(
                 pred_ev = {item.shot_ids[int(torch.argmax(ev_prob[i, :n]))]}
             gold_ev = {sid for sid, target in zip(item.shot_ids, item.evidence_targets) if target > 0.5}
             evidence_f1 += prf(pred_ev, gold_ev)[2]
-            pred_key = {item.shot_ids[int(torch.argmax(key_prob[i, :n]))]}
+            pred_key = {item.shot_ids[j] for j in range(n) if float(key_prob[i, j]) >= 0.5}
+            if not pred_key:
+                pred_key = {item.shot_ids[int(torch.argmax(key_prob[i, :n]))]}
             gold_key = {sid for sid, target in zip(item.shot_ids, item.key_targets) if target > 0.5}
             key_acc += 1.0 if pred_key == gold_key else 0.0
+            key_f1 += prf(pred_key, gold_key)[2]
         for name in level_acc:
             pred = outputs[f"{name}_logits"].argmax(dim=-1)
             level_acc[name] += float((pred == batch["labels"][name]).float().sum().detach().cpu())
@@ -97,6 +101,7 @@ def evaluate_internal(
         "loss": loss_sum / total if total else 0.0,
         "evidence_f1": evidence_f1 / total if total else 0.0,
         "key_action_accuracy": key_acc / total if total else 0.0,
+        "key_action_f1": key_f1 / total if total else 0.0,
         **{key: visual_sums[key] / visual_counts[key] if visual_counts[key] else 0.0 for key in visual_sums},
         **{f"{name}_accuracy": value / total if total else 0.0 for name, value in level_acc.items()},
     }
