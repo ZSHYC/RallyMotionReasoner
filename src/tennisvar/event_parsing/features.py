@@ -96,18 +96,38 @@ def ball_frame_features(frame_indices: list[int], track: dict[str, Any] | None) 
     height = max(float(track.get("height") or track.get("image_height") or 1), 1.0)
     points = {int(item["frame"]): item for item in track.get("points") or [] if item.get("frame") is not None}
     previous_x = previous_y = 0.0
+    previous_frame: int | None = None
     visible_count = 0
     for row_index, frame in enumerate(frame_indices):
         point = points.get(int(frame))
         if not point:
             continue
-        x = float(point.get("ball_x", point.get("x", 0.0))) / width
-        y = float(point.get("ball_y", point.get("y", 0.0))) / height
+        raw_x = point.get("ball_x", point.get("x"))
+        raw_y = point.get("ball_y", point.get("y"))
         confidence = float(point.get("confidence", 0.0))
-        visible = float(bool(point.get("visible", confidence > 0)))
-        dx, dy = x - previous_x, y - previous_y
-        output[row_index] = [x, y, confidence, visible, dx, dy, float(np.hypot(dx, dy)), float(frame) / max(frame_indices[-1], 1)]
-        previous_x, previous_y = x, y
+        visible = float(bool(point.get("visible", confidence > 0)) and raw_x is not None and raw_y is not None)
+        if not visible:
+            output[row_index, 2] = max(0.0, min(1.0, confidence))
+            output[row_index, 7] = float(frame - frame_indices[0]) / max(frame_indices[-1] - frame_indices[0], 1)
+            continue
+        x = float(raw_x) / width
+        y = float(raw_y) / height
+        if previous_frame is None:
+            dx = dy = 0.0
+        else:
+            elapsed = max(int(frame) - previous_frame, 1)
+            dx, dy = (x - previous_x) / elapsed, (y - previous_y) / elapsed
+        output[row_index] = [
+            x,
+            y,
+            max(0.0, min(1.0, confidence)),
+            visible,
+            dx,
+            dy,
+            float(np.hypot(dx, dy)),
+            float(frame - frame_indices[0]) / max(frame_indices[-1] - frame_indices[0], 1),
+        ]
+        previous_x, previous_y, previous_frame = x, y, int(frame)
         visible_count += int(visible)
     return output, "READY" if visible_count else "EMPTY_OR_INVISIBLE"
 

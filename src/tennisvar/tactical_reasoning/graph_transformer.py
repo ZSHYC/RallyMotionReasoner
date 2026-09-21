@@ -81,7 +81,13 @@ if nn is not None:
                     raise ValueError("graph edge index exceeds the number of stroke nodes")
                 relation = self.edge_embedding(edge_type[batch_index, valid].long())
                 source_tokens = batch.node_tokens[batch_index].index_select(0, source)
-                output[batch_index].index_add_(0, target, self.message(torch.cat([source_tokens, relation], dim=-1)))
+                messages = self.message(torch.cat([source_tokens, relation], dim=-1))
+                # Degree normalization prevents a node with several incoming
+                # relations from dominating solely because it has more edges.
+                degree = torch.zeros(batch.node_tokens.size(1), device=target.device, dtype=messages.dtype)
+                degree.index_add_(0, target, torch.ones_like(target, dtype=messages.dtype))
+                messages = messages / degree.index_select(0, target).clamp_min(1.0).sqrt().unsqueeze(-1)
+                output[batch_index].index_add_(0, target, messages)
             return output
 
         def forward(self, batch: TacticalGraphBatch) -> TacticalGraphOutput:

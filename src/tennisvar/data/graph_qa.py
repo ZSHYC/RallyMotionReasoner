@@ -12,8 +12,10 @@ from torch.utils.data import Dataset
 from tennisvar.io import read_jsonl
 from tennisvar.schema_v2 import ANSWER_TYPES, ANSWERABILITY, CAUSAL_STRENGTHS, OBSERVED_EFFECTS, answer_payload
 from tennisvar.tactical_reasoning.graph_transformer import EDGE_TYPE_TO_ID
+from tennisvar.evaluation.matching import optimal_temporal_matching
 
-TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+# Keep Latin words intact while giving CJK text character-level coverage.
+TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u3400-\u4dbf\u4e00-\u9fff]")
 NULL_LABEL = "null"
 
 
@@ -103,9 +105,10 @@ def feature_tokens_for_shot(shot: dict[str, Any], index: int, total: int, *, inc
 
 
 def question_tokens(row: dict[str, Any]) -> list[str]:
-    tokens = [f"qa_type:{row.get('qa_type')}", f"qa_value:{row.get('qa_value', row.get('qa_group'))}"]
-    tokens.extend(f"q:{tok}" for tok in tokenize(row.get("question")))
-    return tokens
+    # Metadata such as qa_type is absent at inference and made the training
+    # and deployment question distributions differ. The question itself is
+    # the only conditioning signal the reasoner can safely rely on.
+    return [f"q:{tok}" for tok in tokenize(row.get("question"))]
 
 
 def build_vocab(
@@ -186,22 +189,11 @@ def match_gold_frames_to_predicted_shots(
 ) -> set[int]:
     """One-to-one temporal alignment; never assumes gold/predicted shot ordinals coincide."""
     references = _frame_list(gold_frames)
-    pairs = sorted(
-        (abs(int(stroke.get("frame") or 0) - frame), stroke_index, gold_index)
-        for stroke_index, stroke in enumerate(strokes)
-        for gold_index, frame in enumerate(references)
-        if abs(int(stroke.get("frame") or 0) - frame) <= tolerance
-    )
-    used_strokes: set[int] = set()
-    used_gold: set[int] = set()
-    shot_ids: set[int] = set()
-    for _, stroke_index, gold_index in pairs:
-        if stroke_index in used_strokes or gold_index in used_gold:
-            continue
-        used_strokes.add(stroke_index)
-        used_gold.add(gold_index)
-        shot_ids.add(int(strokes[stroke_index].get("shot_id", stroke_index + 1)))
-    return shot_ids
+    predicted = [int(stroke.get("frame") or 0) for stroke in strokes]
+    return {
+        int(strokes[pred_index].get("shot_id", pred_index + 1))
+        for pred_index, _ in optimal_temporal_matching(predicted, references, tolerance)
+    }
 
 
 def inverse_maps(label_maps: dict[str, dict[str, int]]) -> dict[str, dict[int, str]]:

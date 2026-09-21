@@ -31,6 +31,14 @@ class EventModelConfig:
 
 if nn is not None:
 
+    def _sinusoidal_positions(length: int, dimension: int, device: Any, dtype: Any) -> Tensor:
+        position = torch.arange(length, device=device, dtype=dtype).unsqueeze(1)
+        scale = torch.exp(torch.arange(0, dimension, 2, device=device, dtype=dtype) * (-torch.log(torch.tensor(10000.0, device=device, dtype=dtype)) / dimension))
+        encoding = torch.zeros(length, dimension, device=device, dtype=dtype)
+        encoding[:, 0::2] = torch.sin(position * scale)
+        encoding[:, 1::2] = torch.cos(position * scale[: encoding[:, 1::2].shape[1]])
+        return encoding.unsqueeze(0)
+
     class TemporalResidualBlock(nn.Module):
         def __init__(self, hidden_dim: int, kernel: int, dropout: float, dilation: int) -> None:
             super().__init__()
@@ -44,9 +52,12 @@ if nn is not None:
             )
             self.norm = nn.LayerNorm(hidden_dim)
 
-        def forward(self, value: Tensor) -> Tensor:
+        def forward(self, value: Tensor, mask: Tensor | None = None) -> Tensor:
+            if mask is not None:
+                value = value * mask.unsqueeze(-1).float()
             update = self.net(value.transpose(1, 2)).transpose(1, 2)
-            return self.norm(value + update)
+            output = self.norm(value + update)
+            return output if mask is None else output * mask.unsqueeze(-1).float()
 
 
     class EventParsingModule(nn.Module):
@@ -81,10 +92,17 @@ if nn is not None:
         def forward(self, features: Tensor, mask: Tensor | None = None) -> dict[str, Tensor]:
             if features.ndim != 3:
                 raise ValueError("features must have shape [batch, frames, dim]")
+            if mask is not None and mask.shape[:2] != features.shape[:2]:
+                raise ValueError("mask must have shape [batch, frames]")
             hidden = self.input(features)
+            if mask is not None:
+                hidden = hidden * mask.unsqueeze(-1).float()
             for block in self.local:
-                hidden = block(hidden)
+                hidden = block(hidden, mask)
+            hidden = hidden + _sinusoidal_positions(hidden.shape[1], hidden.shape[2], hidden.device, hidden.dtype)
             hidden = self.temporal(hidden, src_key_padding_mask=None if mask is None else ~mask.bool())
+            if mask is not None:
+                hidden = hidden * mask.unsqueeze(-1).float()
             output = {"event_logits": self.event_head(hidden).squeeze(-1), "frame_tokens": hidden}
             output.update({f"{field}_logits": head(hidden) for field, head in self.attribute_heads.items()})
             return output

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 try:
+    import torch
     from torch import Tensor, nn
 except ImportError:  # pragma: no cover
     Tensor = Any
@@ -33,6 +34,16 @@ if nn is not None:
             self.token_embedding = nn.Embedding(vocab_size, hidden_dim, padding_idx=0)
             self.question_norm = nn.LayerNorm(hidden_dim)
             self.semantic_norm = nn.LayerNorm(hidden_dim)
+            token_layer = nn.TransformerEncoderLayer(
+                hidden_dim,
+                max(1, min(num_heads, 4)),
+                hidden_dim * 2,
+                dropout=dropout,
+                activation="gelu",
+                batch_first=True,
+                norm_first=True,
+            )
+            self.token_encoder = nn.TransformerEncoder(token_layer, num_layers=1)
             self.visual_adapter = TennisMotionAdapter(
                 input_dim=visual_feature_dim,
                 hidden_dim=hidden_dim,
@@ -44,14 +55,31 @@ if nn is not None:
             self.evidence_router = EvidenceRouter(hidden_dim, dropout=dropout)
             self.heads = nn.ModuleDict({name: nn.Linear(hidden_dim, len(mapping)) for name, mapping in label_maps.items()})
 
-        def _mean_embedding(self, token_ids: Tensor) -> Tensor:
-            embeddings = self.token_embedding(token_ids)
-            mask = token_ids.ne(0).float().unsqueeze(-1)
-            return (embeddings * mask).sum(dim=-2) / mask.sum(dim=-2).clamp_min(1.0)
+        def _sequence_embedding(self, token_ids: Tensor) -> Tensor:
+            """Encode token order before pooling; padding never contributes to the pool."""
+            shape = token_ids.shape
+            flat = token_ids.reshape(-1, shape[-1])
+            embeddings = self.token_embedding(flat)
+            valid = flat.ne(0)
+            safe_valid = valid.clone()
+            empty = ~safe_valid.any(dim=1)
+            safe_valid[empty, 0] = True
+            position = torch.arange(shape[-1], device=flat.device).view(1, -1)
+            div = torch.exp(
+                torch.arange(0, embeddings.shape[-1], 2, device=flat.device, dtype=embeddings.dtype)
+                * (-torch.log(torch.tensor(10000.0, device=flat.device, dtype=embeddings.dtype)) / embeddings.shape[-1])
+            )
+            positional = torch.zeros(1, shape[-1], embeddings.shape[-1], device=flat.device, dtype=embeddings.dtype)
+            positional[:, :, 0::2] = torch.sin(position.unsqueeze(-1) * div)
+            positional[:, :, 1::2] = torch.cos(position.unsqueeze(-1) * div[: positional[:, :, 1::2].shape[-1]])
+            encoded = self.token_encoder(embeddings + positional, src_key_padding_mask=~safe_valid)
+            weights = valid.float().unsqueeze(-1)
+            pooled = (encoded * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1.0)
+            return pooled.reshape(*shape[:-1], -1)
 
         def forward(self, batch: dict[str, Any]) -> dict[str, Tensor]:
-            question = self.question_norm(self._mean_embedding(batch["question_ids"]))
-            semantics = self.semantic_norm(self._mean_embedding(batch["node_ids"]))
+            question = self.question_norm(self._sequence_embedding(batch["question_ids"]))
+            semantics = self.semantic_norm(self._sequence_embedding(batch["node_ids"]))
             visual = self.visual_adapter(batch["visual_features"], batch.get("node_mask"))
             strokes = self.stroke_tokenizer(semantics, visual, batch["node_frames"])
             graph = self.graph(

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 try:
     import torch
+    import torch.nn.functional as F
     from torch import Tensor, nn
 except Exception:  # pragma: no cover
     torch = None
@@ -54,13 +55,17 @@ if nn is not None:
         ) -> EvidenceRouterOutput:
             scores = self.head(stroke_tokens, question_token)
             weights = self._masked_softmax(scores.evidence_logits, node_mask)
+            # A decisive action is a subset of the supporting evidence. The
+            # log-probability gate keeps the two heads semantically consistent
+            # instead of allowing a key action outside the evidence chain.
+            conditioned_key_logits = scores.key_action_logits + F.logsigmoid(scores.evidence_logits)
             evidence_context = torch.bmm(weights.unsqueeze(1), stroke_tokens).squeeze(1)
             if not enabled:
-                return EvidenceRouterOutput(scores.evidence_logits, scores.key_action_logits, graph_token, weights)
+                return EvidenceRouterOutput(scores.evidence_logits, conditioned_key_logits, graph_token, weights)
             joint = torch.cat([graph_token, evidence_context, question_token], dim=-1)
             gate = self.route_gate(joint)
             routed = self.out(torch.cat([gate * graph_token, (1.0 - gate) * evidence_context, question_token], dim=-1))
-            return EvidenceRouterOutput(scores.evidence_logits, scores.key_action_logits, routed, weights)
+            return EvidenceRouterOutput(scores.evidence_logits, conditioned_key_logits, routed, weights)
 
 else:
 

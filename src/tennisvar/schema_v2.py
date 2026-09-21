@@ -118,6 +118,12 @@ def validate_prediction_payload(value: Any) -> list[str]:
         items = value.get(field)
         if not isinstance(items, list) or any(not isinstance(item, int) or isinstance(item, bool) for item in items):
             errors.append(f"{field} must be an integer array")
+    if isinstance(value.get("evidence_shot_ids"), list) and isinstance(value.get("key_action_shot_ids"), list):
+        evidence_ids = set(value["evidence_shot_ids"])
+        if not set(value["key_action_shot_ids"]).issubset(evidence_ids):
+            errors.append("key_action_shot_ids must be a subset of evidence_shot_ids")
+    if isinstance(value.get("evidence_frames"), list) and any(frame < 0 for frame in value["evidence_frames"]):
+        errors.append("evidence_frames must be non-negative")
     return errors
 
 

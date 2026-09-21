@@ -5,24 +5,11 @@ from collections import defaultdict
 from typing import Any
 
 from tennisvar.event_parsing.labels import ATTRIBUTE_FIELDS
+from tennisvar.evaluation.matching import optimal_temporal_matching
 
 
 def one_to_one_match(predicted: list[int], gold: list[int], tolerance: int) -> list[tuple[int, int]]:
-    pairs = sorted(
-        (abs(int(predicted[p]) - int(gold[g])), p, g)
-        for p in range(len(predicted))
-        for g in range(len(gold))
-        if abs(int(predicted[p]) - int(gold[g])) <= tolerance
-    )
-    used_pred: set[int] = set()
-    used_gold: set[int] = set()
-    matched: list[tuple[int, int]] = []
-    for _, pred_index, gold_index in pairs:
-        if pred_index not in used_pred and gold_index not in used_gold:
-            used_pred.add(pred_index)
-            used_gold.add(gold_index)
-            matched.append((pred_index, gold_index))
-    return matched
+    return optimal_temporal_matching(predicted, gold, tolerance)
 
 
 def average_precision(scores: list[float], labels: list[int]) -> float:

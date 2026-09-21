@@ -102,7 +102,11 @@ class TennisVAR:
             answer = self.qwen.generate(selected_frames, question, candidates)
             by_id = {int(item["shot_id"]): item for item in candidates}
             evidence = []
-            for shot_id in answer.get("evidence_shot_ids") or []:
+            selected_candidates = [item for item in candidates if item.get("selected")]
+            if not selected_candidates:
+                selected_candidates = candidates[:1]
+            for candidate in selected_candidates:
+                shot_id = candidate["shot_id"]
                 candidate = by_id.get(int(shot_id))
                 if not candidate:
                     continue
@@ -115,10 +119,23 @@ class TennisVAR:
                     }
                 )
             degraded = bool(answer.get("parse_error"))
+            evidence_shot_ids = [int(item["shot_id"]) for item in evidence]
+            key_action_shot_ids = [
+                int(item["shot_id"])
+                for item in evidence
+                if item.get("key_action_confidence", 0.0) >= 0.5
+            ]
             return {
                 "schema_version": OUTPUT_SCHEMA,
                 "question": question,
                 "answer": str(answer.get("answer") or ""),
+                "answer_type": answer.get("answer_type", "free_form"),
+                "level_1": self.selector.last_predictions.get("level_1"),
+                "level_2": self.selector.last_predictions.get("level_2"),
+                "level_3": self.selector.last_predictions.get("level_3"),
+                "evidence_shot_ids": evidence_shot_ids,
+                "key_action_shot_ids": key_action_shot_ids,
+                "evidence_frames": [int(item["frame"]) for item in evidence],
                 "answerability": answer.get("answerability", "unanswerable"),
                 "explanation": str(answer.get("explanation") or ""),
                 "observed_effect": answer.get("observed_effect", "unknown"),

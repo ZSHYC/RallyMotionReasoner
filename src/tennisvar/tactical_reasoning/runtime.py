@@ -50,6 +50,8 @@ class TGTRCheckpointSelector:
             raise ValueError("TGTR main selector refuses checkpoints that consume event label text")
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.top_k = int(top_k)
+        self.evidence_threshold = 0.35
+        self.last_predictions: dict[str, str | None] = {}
         self.model = TacticalGraphGuidedTemporalReasoner(
             len(self.state["vocab"]),
             self.state["label_maps"],
@@ -127,6 +129,12 @@ class TGTRCheckpointSelector:
                 output = self.model(batch)
             evidence = self.torch.sigmoid(output["evidence_logits"][0, : len(strokes)]).cpu().tolist()
             key_scores = self.torch.sigmoid(output["key_action_logits"][0, : len(strokes)]).cpu().tolist()
+            self.last_predictions = {}
+            for name, mapping in self.state["label_maps"].items():
+                key = f"{name}_logits"
+                if key in output:
+                    inverse = {int(index): str(label) for label, index in mapping.items()}
+                    self.last_predictions[name] = inverse[int(output[key][0].argmax().item())]
         order = sorted(range(len(strokes)), key=lambda index: evidence[index], reverse=True)[: self.top_k]
         candidates = []
         for index in order:
@@ -139,6 +147,7 @@ class TGTRCheckpointSelector:
                     "time_sec": stroke.get("time_sec"),
                     "confidence": float(evidence[index]),
                     "key_action_confidence": float(key_scores[index]),
+                    "selected": bool(evidence[index] >= self.evidence_threshold),
                     "event_confidence": float(stroke.get("confidence", 0.0)),
                     "hitter": parsed.get("hitter"),
                     "court_zone": parsed.get("court_zone"),

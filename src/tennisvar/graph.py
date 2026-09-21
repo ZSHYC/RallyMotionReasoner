@@ -188,7 +188,10 @@ def build_edges(strokes: list[dict[str, Any]], units: list[dict[str, Any]]) -> l
         edges.append({"type": "temporal_next", "source": f"shot_{left['shot_id']}", "target": f"shot_{right['shot_id']}"})
     by_player: dict[str, list[int]] = {}
     for shot in strokes:
-        player = str((shot.get("parsed") or {}).get("hitter"))
+        player = (shot.get("parsed") or {}).get("hitter")
+        if player in {None, "", "-", "unknown", "Unknown"}:
+            continue
+        player = str(player)
         by_player.setdefault(player, []).append(int(shot["shot_id"]))
     for ids in by_player.values():
         for left, right in zip(ids, ids[1:]):
