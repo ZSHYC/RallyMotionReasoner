@@ -144,9 +144,9 @@ if nn is not None:
 
         def __init__(
             self,
-            attribute_maps: dict[str, dict[str, int]] | None = None,
             attention_heads: int = 4,
             dropout: float = 0.1,
+            attribute_maps: dict[str, dict[str, int]] | None = None,
         ) -> None:
             super().__init__()
             self.trajectory = TrajectoryExpert()

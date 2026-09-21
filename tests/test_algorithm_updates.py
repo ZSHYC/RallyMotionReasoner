@@ -145,7 +145,7 @@ def test_region_motion_contract_and_bounce_graph_cue() -> None:
 
 
 def test_region_cross_modal_heads_have_expected_outputs() -> None:
-    model = RegionFusionEventModel({"hitter": {"near": 0, "far": 1}}).eval()
+    model = RegionFusionEventModel(attribute_maps={"hitter": {"near": 0, "far": 1}}).eval()
     with torch.no_grad():
         output = model(torch.randn(1, 25, 11), torch.randn(1, 49, 3840))
     assert output["eventness_logit"].shape == (1,)
