@@ -46,8 +46,8 @@ tennisvar = "tennisvar.cli:main"
 
 [project.urls]
 Homepage = "https://whynotgit2025.github.io/TennisVAR/"
-Repository = "https://github.com/WhynotGit2025/TennisVAR"
-Issues = "https://github.com/WhynotGit2025/TennisVAR/issues"
+Repository = "https://github.com/ZSHYC/TennisVAR"
+Issues = "https://github.com/ZSHYC/TennisVAR/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

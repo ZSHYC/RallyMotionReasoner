@@ -88,7 +88,7 @@ TennisVAR produces structured evidence chains together with open-ended tactical 
 **Requirements:** Python ≥ 3.10, PyTorch ≥ 2.1, and CUDA for Qwen3-VL LoRA training.
 
 ```bash
-git clone https://github.com/WhynotGit2025/TennisVAR.git
+git clone https://github.com/ZSHYC/TennisVAR.git
 cd TennisVAR
 
 python -m venv .venv
