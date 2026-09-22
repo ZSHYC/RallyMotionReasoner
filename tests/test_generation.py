@@ -1,6 +1,6 @@
 import json
 
-from tennisvar.generation.qwen import parse_qwen_json, qwen_prompt
+from rallymotionreasoner.generation.qwen import parse_qwen_json, qwen_prompt
 
 
 def _prediction() -> dict:

@@ -20,12 +20,12 @@
     <section>
       <h2>Pipeline</h2>
       <p>Video and ball trajectories are converted into hit and bounce events, organized as a tactical graph, and routed as evidence for downstream reasoning.</p>
-      <div class="pipeline"><span>Trajectory + video</span><b>→</b><span>Region-motion events</span><b>→</b><span>TGTR graph reasoning</span><b>→</b><span>Grounded answer</span></div>
+      <div class="pipeline"><span>Trajectory + video</span><b>→</b><span>Region-motion events</span><b>→</b><span>RGR graph reasoning</span><b>→</b><span>Grounded answer</span></div>
     </section>
 
     <section class="grid">
       <article><h2>Event model</h2><p>TrajectoryExpert and VisualExpert exchange information through bidirectional cross-attention. Masks handle missing observations and padded temporal slots.</p></article>
-      <article><h2>Graph reasoning</h2><p>Hit nodes, bounce cues, temporal relations, motion statistics, and 800-dimensional frame descriptors are consumed by TGTR.</p></article>
+      <article><h2>Graph reasoning</h2><p>Hit nodes, bounce cues, temporal relations, motion statistics, and 800-dimensional frame descriptors are consumed by RGR.</p></article>
       <article><h2>Evidence</h2><p>Question-conditioned routing selects supporting strokes and key actions before optional Qwen generation.</p></article>
     </section>
 

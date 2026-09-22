@@ -16,7 +16,7 @@ region-motion event detector
 tactical event graph
         │  temporal edges + same-player edges + bounce cues
         ▼
-TGTR temporal graph reasoner
+RGR temporal graph reasoner
         │  shot tokens + motion tokens + graph relations
         ▼
 evidence router
@@ -37,9 +37,9 @@ The event detector is the only event backend in this repository. It combines two
 
 The runtime loads `trajectory_expert.pt` and `visual_expert.pt` from one expert directory. It decodes hit and bounce events with temporal suppression. Bounce events remain separate graph cues; they are not converted into player stroke nodes.
 
-### Graph and TGTR
+### Graph and RGR
 
-Hit events become stroke nodes. Bounce events provide timing context such as the gap before or after a stroke. TGTR receives:
+Hit events become stroke nodes. Bounce events provide timing context such as the gap before or after a stroke. RGR receives:
 
 - 800-dimensional frame descriptors;
 - 24-dimensional motion statistics derived from those descriptors;
@@ -48,11 +48,11 @@ Hit events become stroke nodes. Bounce events provide timing context such as the
 - same-player relations where the hitter is known;
 - bounce-aware structural tokens.
 
-The graph loader and event exporter use the same structured feature payload, so offline TGTR data and online inference share the frame alignment contract.
+The graph loader and event exporter use the same structured feature payload, so offline RGR data and online inference share the frame alignment contract.
 
 ### Evidence-grounded generation
 
-The evidence router scores candidate strokes and key actions for a tactical question. Key-action probability is computed from the conditional key score and evidence score. The generator receives validated candidate identifiers, their evidence frames, sparse global context, and predicted event information. It must return the canonical answer fields defined in [`src/tennisvar/schema.py`](src/tennisvar/schema.py).
+The evidence router scores candidate strokes and key actions for a tactical question. Key-action probability is computed from the conditional key score and evidence score. The generator receives validated candidate identifiers, their evidence frames, sparse global context, and predicted event information. It must return the canonical answer fields defined in [`src/rallymotionreasoner/schema.py`](src/rallymotionreasoner/schema.py).
 
 ## Requirements
 
@@ -88,21 +88,21 @@ region-experts/
 └── visual_expert.pt
 ```
 
-The video, trajectory, DINOv3 repository/weights, TGTR checkpoint, and optional Qwen model are supplied independently. No hash, fingerprint, or artifact digest is required.
+The video, trajectory, DINOv3 repository/weights, RGR checkpoint, and optional Qwen model are supplied independently. No hash, fingerprint, or artifact digest is required.
 
 ## Commands
 
 Show all available commands:
 
 ```bash
-PYTHONPATH=src python -m tennisvar.cli --help
+PYTHONPATH=src python -m rallymotionreasoner.cli --help
 ```
 
 ### Prepare graph and QA data
 
 ```bash
-PYTHONPATH=src python -m tennisvar.cli prepare-data \
-  --config configs/tennisvar.yaml
+PYTHONPATH=src python -m rallymotionreasoner.cli prepare-data \
+  --config configs/rallymotionreasoner.yaml
 ```
 
 This validates configured splits and builds graph/QA artifacts. It does not train a model.
@@ -119,21 +119,21 @@ rallymotionreasoner predict-events \
   --output outputs/events.json
 ```
 
-Use `PYTHONPATH=src python -m tennisvar.cli predict-events` when the editable package is not installed. The output contains decoded events, frame scores, frame features, and feature provenance.
+Use `PYTHONPATH=src python -m rallymotionreasoner.cli predict-events` when the editable package is not installed. The output contains decoded events, frame scores, frame features, and feature provenance.
 
-### Export events for TGTR
+### Export events for RGR
 
 ```bash
 rallymotionreasoner export-events \
   --checkpoint /path/to/region-experts \
   --split train \
-  --experiment-config configs/tennisvar.yaml \
+  --experiment-config configs/rallymotionreasoner.yaml \
   --dinov3-repo /path/to/dinov3 \
   --dinov3-weights /path/to/dinov3.pth \
   --output outputs/events_train
 ```
 
-The exporter reads configured rally videos and TrackNet files, writes predicted event graphs, and stores hit-only frame features using the shared TGTR payload format. Run it separately for `train`, `val`, and `test` when those splits are configured.
+The exporter reads configured rally videos and TrackNet files, writes predicted event graphs, and stores hit-only frame features using the shared RGR payload format. Run it separately for `train`, `val`, and `test` when those splits are configured.
 
 ### Run the complete pipeline
 
@@ -142,7 +142,7 @@ rallymotionreasoner predict \
   --video /path/to/rally.mp4 \
   --ball-track /path/to/trajectory.json \
   --event-checkpoint /path/to/region-experts \
-  --tgtr-checkpoint /path/to/tgtr.pt \
+  --rgr-checkpoint /path/to/rgr.pt \
   --qwen-model /path/to/Qwen3-VL-8B-Instruct \
   --question "How did the player create the winning opportunity?" \
   --dinov3-repo /path/to/dinov3 \
@@ -150,15 +150,15 @@ rallymotionreasoner predict \
   --output outputs/answer.json
 ```
 
-The Qwen model and adapter are optional at the code level; omit them when only structured event and TGTR outputs are needed.
+The Qwen model and adapter are optional at the code level; omit them when only structured event and RGR outputs are needed.
 
 ### Train downstream components
 
 Training is separate from event inference and is not required for reading the model structure:
 
 ```bash
-PYTHONPATH=src python scripts/train_tgtr.py \
-  --experiment-config configs/tennisvar.yaml
+PYTHONPATH=src python scripts/train_graph_reasoner.py \
+  --experiment-config configs/rallymotionreasoner.yaml
 
 PYTHONPATH=src torchrun --nproc-per-node=8 scripts/train_qwen_lora.py \
   --model /path/to/Qwen3-VL-8B-Instruct \
@@ -174,13 +174,13 @@ These commands describe available interfaces only. No training or numerical repr
 
 ```text
 configs/                         YAML experiment and path configuration
-scripts/train_tgtr.py            TGTR training entry point
+scripts/train_graph_reasoner.py            RGR training entry point
 scripts/train_qwen_lora.py       Qwen LoRA training entry point
-src/tennisvar/event_parsing/     event model, features, graph, decoder, runtime
-src/tennisvar/features/           trajectory input and normalization
-src/tennisvar/tactical_reasoning/ TGTR, motion adapter, evidence routing
-src/tennisvar/generation/        structured generation and manifest handling
-src/tennisvar/pipeline.py        end-to-end event → TGTR → generation flow
+src/rallymotionreasoner/event_detection/     event model, features, graph, decoder, runtime
+src/rallymotionreasoner/features/           trajectory input and normalization
+src/rallymotionreasoner/graph_reasoning/ RGR, motion adapter, evidence routing
+src/rallymotionreasoner/generation/        structured generation and manifest handling
+src/rallymotionreasoner/pipeline.py        end-to-end event → RGR → generation flow
 tests/                           lightweight contract and shape tests
 docs/algorithm.md                algorithm and interface notes
 ```
@@ -194,7 +194,7 @@ ruff check src scripts tests
 PYTHONPATH=src pytest -q
 ```
 
-The tests validate tensor shapes, masked fusion behavior, event graph semantics, feature alignment, TGTR contracts, configuration validation, and structured output fields. They do not run training or real video inference.
+The tests validate tensor shapes, masked fusion behavior, event graph semantics, feature alignment, RGR contracts, configuration validation, and structured output fields. They do not run training or real video inference.
 
 ## License
 

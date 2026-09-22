@@ -3,16 +3,16 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from tennisvar.data.graph_qa import match_gold_frames_to_predicted_shots, tokenize
-from tennisvar.evaluation.event_metrics import one_to_one_match
-from tennisvar.event_parsing.decoder import DecodedEvent
-from tennisvar.event_parsing.features import ball_frame_features
-from tennisvar.event_parsing.graph import build_predicted_graph
-from tennisvar.event_parsing.model import RegionFusionEventModel
-from tennisvar.features.ball_trajectory import normalize_trajectory, trajectory_rows
-from tennisvar.tactical_reasoning.model import TacticalGraphGuidedTemporalReasoner
-from tennisvar.training.eval import prf
-from tennisvar.training.losses import compute_loss
+from rallymotionreasoner.data.graph_qa import match_gold_frames_to_predicted_shots, tokenize
+from rallymotionreasoner.evaluation.event_metrics import one_to_one_match
+from rallymotionreasoner.event_detection.decoder import DecodedEvent
+from rallymotionreasoner.event_detection.features import ball_frame_features
+from rallymotionreasoner.event_detection.graph import build_predicted_graph
+from rallymotionreasoner.event_detection.model import MotionRegionEventModel
+from rallymotionreasoner.features.ball_trajectory import normalize_trajectory, trajectory_rows
+from rallymotionreasoner.graph_reasoning.model import RallyGraphReasoner
+from rallymotionreasoner.training.eval import prf
+from rallymotionreasoner.training.losses import compute_loss
 
 
 def test_temporal_matching_maximizes_cardinality() -> None:
@@ -34,8 +34,8 @@ def test_invisible_ball_does_not_crash_or_create_motion() -> None:
     assert np.allclose(features, 0.0)
 
 
-def test_tgtr_padding_tokens_remain_finite() -> None:
-    model = TacticalGraphGuidedTemporalReasoner(
+def test_rgr_padding_tokens_remain_finite() -> None:
+    model = RallyGraphReasoner(
         vocab_size=16,
         label_maps={"level_1": {"A": 0}},
         visual_feature_dim=800,
@@ -59,8 +59,8 @@ def test_tgtr_padding_tokens_remain_finite() -> None:
     assert all(torch.isfinite(value).all() for value in output.values())
 
 
-def test_tgtr_consumes_structured_state_and_motion_contract() -> None:
-    model = TacticalGraphGuidedTemporalReasoner(
+def test_rgr_consumes_structured_state_and_motion_contract() -> None:
+    model = RallyGraphReasoner(
         vocab_size=16,
         label_maps={"level_1": {"A": 0}},
         visual_feature_dim=8,
@@ -95,7 +95,7 @@ def test_tgtr_consumes_structured_state_and_motion_contract() -> None:
     assert torch.isfinite(output["evidence_logits"]).all()
 
 
-def test_tgtr_auxiliary_loss_and_multilabel_key_metric_are_finite() -> None:
+def test_rgr_auxiliary_loss_and_multilabel_key_metric_are_finite() -> None:
     outputs = {
         "evidence_logits": torch.tensor([[0.0, -1.0]]),
         "key_action_logits": torch.tensor([[1.0, -1.0]]),
@@ -145,7 +145,7 @@ def test_region_motion_contract_and_bounce_graph_cue() -> None:
 
 
 def test_region_cross_modal_heads_have_expected_outputs() -> None:
-    model = RegionFusionEventModel(attribute_maps={"hitter": {"near": 0, "far": 1}}).eval()
+    model = MotionRegionEventModel(attribute_maps={"hitter": {"near": 0, "far": 1}}).eval()
     with torch.no_grad():
         output = model(torch.randn(1, 25, 11), torch.randn(1, 49, 3840))
     assert output["eventness_logit"].shape == (1,)

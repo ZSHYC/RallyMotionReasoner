@@ -13,15 +13,15 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
-from tennisvar.generation.manifest import (
+from rallymotionreasoner.generation.manifest import (
     MANIFEST_NAME,
     QWEN_ADAPTER_SCHEMA,
     load_qwen_adapter_manifest,
 )
-from tennisvar.generation.sft import prepare_qwen_sft_item, structured_video_messages
-from tennisvar.io import read_json, read_jsonl, write_json
-from tennisvar.schema import REQUIRED_SCHEMA
-from tennisvar.tracks import TRACK_TGTR_ASSISTED_PRED, normalize_track
+from rallymotionreasoner.generation.sft import prepare_qwen_sft_item, structured_video_messages
+from rallymotionreasoner.io import read_json, read_jsonl, write_json
+from rallymotionreasoner.schema import REQUIRED_SCHEMA
+from rallymotionreasoner.tracks import TRACK_GRAPH_ASSISTED_PRED, normalize_track
 
 
 def _distributed_indices(size: int, epoch: int, seed: int, rank: int, world_size: int) -> list[int]:
@@ -55,7 +55,7 @@ def _validate_data_report(
 ) -> dict[str, Any]:
     report = read_json(report_path)
     expected = {
-        "schema": "tennisvar.qwen_data_report.v1",
+        "schema": "rallymotionreasoner.qwen_data_report.v1",
         "status": "PASS",
         "track": expected_track,
         "media_mode": "videos",
@@ -112,7 +112,7 @@ def _validate_rows(
             raise ValueError(f"Qwen {label} row split mismatch for {qa_id}: {metadata.get('split')} != {expected_split}")
         if metadata.get("media_mode") != "videos" or list(metadata.get("schema_fields") or []) != list(REQUIRED_SCHEMA):
             raise ValueError(f"Qwen {label} row media/schema contract mismatch for {qa_id}")
-        if metadata.get("graph_source") != "region_fusion_predicted":
+        if metadata.get("graph_source") != "motion_region_predicted":
             raise ValueError(f"Qwen {label} row lacks predicted-event provenance: {qa_id}")
         if validate_media:
             missing = [str(path) for path in row["videos"][0] if not Path(path).is_file()]
@@ -188,13 +188,13 @@ def _save_checkpoint(
         temporary = output_dir / f".checkpoint-{global_step}.{os.getpid()}.tmp"
         if temporary.exists():
             raise FileExistsError(f"stale temporary checkpoint exists: {temporary}")
-        staging_parent = Path(os.environ.get("TENNISVAR_LOCAL_CHECKPOINT_ROOT", "/tmp"))
+        staging_parent = Path(os.environ.get("RALLYMOTIONREASONER_LOCAL_CHECKPOINT_ROOT", "/tmp"))
         if not staging_parent.is_dir():
             raise FileNotFoundError(f"local Qwen checkpoint staging root does not exist: {staging_parent}")
         # Serialize on node-local storage before atomically publishing to the
         # run directory, which also supports network filesystems.
         with tempfile.TemporaryDirectory(
-            prefix=f"tennisvar-qwen-checkpoint-{global_step}-", dir=staging_parent
+            prefix=f"rallymotionreasoner-qwen-checkpoint-{global_step}-", dir=staging_parent
         ) as staging_value:
             staging = Path(staging_value)
             base = model.module if hasattr(model, "module") else model
@@ -202,7 +202,7 @@ def _save_checkpoint(
             processor.save_pretrained(staging)
             torch.save(
                 {
-                    "schema": "tennisvar.qwen_native_trainer",
+                    "schema": "rallymotionreasoner.qwen_native_trainer",
                     "global_step": global_step,
                     "next_epoch": next_epoch,
                     "next_iteration": next_iteration,
@@ -234,7 +234,7 @@ def _save_checkpoint(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Native multi-GPU Qwen3-VL LoRA SFT for TennisVAR.")
+    parser = argparse.ArgumentParser(description="Native multi-GPU Qwen3-VL LoRA SFT for RallyMotionReasoner.")
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--train-data", type=Path, required=True)
     parser.add_argument("--val-data", type=Path, required=True)
@@ -264,7 +264,7 @@ def main() -> int:
         train_rows = train_rows[: args.max_train_rows]
     if args.max_val_rows:
         val_rows = val_rows[: args.max_val_rows]
-    track = TRACK_TGTR_ASSISTED_PRED
+    track = TRACK_GRAPH_ASSISTED_PRED
     launch_rank = int(os.environ.get("RANK", "0"))
     data_report = (
         _validate_data_report(
@@ -296,7 +296,7 @@ def main() -> int:
         raise ValueError(f"Qwen train/val qa_id leakage: {sorted(overlap)[:10]}")
     dry_report = {
         "status": "DRY_RUN" if args.dry_run else "READY_TO_TRAIN",
-        "schema": "tennisvar.qwen_native_training_report.v1",
+        "schema": "rallymotionreasoner.qwen_native_training_report.v1",
         "track": track,
         "train_rows": len(train_rows),
         "val_rows": len(val_rows),
@@ -379,7 +379,7 @@ def main() -> int:
     start_epoch, resume_iteration, global_step = 1, 0, 0
     if resume_checkpoint:
         state = torch.load(resume_checkpoint / "trainer_state.pt", map_location="cpu", weights_only=False)
-        if state.get("schema") != "tennisvar.qwen_native_trainer":
+        if state.get("schema") != "rallymotionreasoner.qwen_native_trainer":
             raise ValueError(f"invalid native Qwen trainer state: {resume_checkpoint}")
         expected_state = {
             "world_size": world_size,
@@ -425,7 +425,7 @@ def main() -> int:
         "seed": args.seed,
         "trainer": "native_torch_ddp_peft",
         "world_size": world_size,
-        "provenance_contract": "predicted_event+tgtr_checkpoint",
+        "provenance_contract": "predicted_event+rgr_checkpoint",
         "training_contract": {
             "epochs": args.epochs,
             "learning_rate": args.learning_rate,

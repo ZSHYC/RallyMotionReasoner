@@ -1,13 +1,13 @@
 from pathlib import Path
 
-from tennisvar.config import load_paths
-from tennisvar.configs import load_tgtr_vl_config
+from rallymotionreasoner.config import load_paths
+from rallymotionreasoner.configs import load_graph_reasoner_config
 
 
 def test_paper_configuration_matches_feature_contract() -> None:
-    config = load_tgtr_vl_config(Path("configs/tennisvar.yaml"))
+    config = load_graph_reasoner_config(Path("configs/rallymotionreasoner.yaml"))
     assert config["feature_extraction"]["feature_dim"] == 800
-    assert config["data"]["graph_source"] == "region_fusion"
+    assert config["data"]["graph_source"] == "motion_region"
     assert config["data"]["include_label_tokens"] is False
     assert config["training"]["epochs"] == 120
 

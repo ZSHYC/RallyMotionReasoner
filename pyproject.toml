@@ -34,7 +34,7 @@ video = ["opencv-python-headless>=4.8,<5"]
 dev = ["pytest>=8,<9", "ruff>=0.9,<1"]
 
 [project.scripts]
-rallymotionreasoner = "tennisvar.cli:main"
+rallymotionreasoner = "rallymotionreasoner.cli:main"
 
 [project.urls]
 Repository = "https://github.com/ZSHYC/RallyMotionReasoner"
