@@ -1,124 +1,160 @@
-<h1 align="center">🎾 RallyMotionReasoner</h1>
+# RallyMotionReasoner
 
-<h3 align="center">Stroke-Evidence-Grounded Tactical Reasoning for Tennis Videos</h3>
+RallyMotionReasoner is a modular system for event-grounded tactical reasoning in tennis videos. It converts a rally into temporally aligned hit and bounce events, builds a tactical graph, retrieves evidence for a question, and optionally generates a grounded answer with a Qwen vision-language model.
 
-<p align="center">
-  <a href="https://scholar.google.com/citations?user=QJSp3NUAAAAJ">Yifan Mei</a><sup>1</sup>,
-  Qingling Shi<sup>1</sup>,
-  <a href="https://scholar.google.com/citations?user=K13qHZoAAAAJ">Changli Wu</a><sup>1,2,†</sup>,
-  <a href="https://scholar.google.com/citations?user=oW6qV1oAAAAJ">Jiayuan Rao</a><sup>3</sup>,
-  <a href="https://scholar.google.com/citations?user=xp_rICcAAAAJ">Jiayi Ji</a><sup>1</sup>,
-  <a href="https://scholar.google.com/citations?user=iYEcVaAAAAAJ">Liujuan Cao</a><sup>1,*</sup>
-</p>
+The repository contains the model structure and integration code. It does not claim reproduced training results and does not include broadcast videos or pretrained weights.
 
-<p align="center">
-  <sup>1</sup> Xiamen University &nbsp; · &nbsp;
-  <sup>2</sup> Shanghai Innovation Institute &nbsp; · &nbsp;
-  <sup>3</sup> Shanghai Jiao Tong University
-  <br>
-  <sup>†</sup> Project leader &nbsp; · &nbsp; <sup>*</sup> Corresponding author
-</p>
+## What the system does
 
-<p align="center">
-  <a href="https://whynotgit2025.github.io/RallyMotionReasoner/"><img src="https://img.shields.io/badge/Project-Page-2f7d4f?style=for-the-badge" alt="Project Page"></a>
-  <a href="https://arxiv.org/abs/2608.12920"><img src="https://img.shields.io/badge/arXiv-2608.12920-b31b1b?style=for-the-badge" alt="Paper"></a>
-  <img src="https://img.shields.io/badge/TRACE-Coming_Soon-f0a202?style=for-the-badge" alt="Dataset coming soon">
-  <img src="https://img.shields.io/badge/Models-Coming_Soon-64748b?style=for-the-badge" alt="Models coming soon">
-</p>
+```text
+video + ball trajectory
+        │
+        ▼
+region-motion event detector
+        │  hit / bounce / timing / motion statistics
+        ▼
+tactical event graph
+        │  temporal edges + same-player edges + bounce cues
+        ▼
+TGTR temporal graph reasoner
+        │  shot tokens + motion tokens + graph relations
+        ▼
+evidence router
+        │  question-conditioned evidence and key actions
+        ▼
+optional Qwen vision-language generator
+```
 
+### Event detection
 
-## 🎬 RallyMotionReasoner in Action
+The event detector is the only event backend in this repository. It combines two expert inputs:
 
-<p align="center">
-  <img src="docs/public/tennisvar-demo.gif" width="100%" alt="RallyMotionReasoner tactical reasoning demo">
-</p>
+- **TrajectoryExpert** encodes ball position, velocity, acceleration, visibility, and temporal validity from TrackNet-style trajectories.
+- **VisualExpert** encodes a full-frame DINO feature together with four spatial crops, preserving both court context and local player motion.
+- **Bidirectional cross-attention** lets trajectory tokens query visual regions and visual regions query trajectory context.
+- **Event heads** predict event confidence, event type, hitter, and optional technique attributes.
+- **Masks** remove padded trajectory slots and missing visual regions before attention and pooling.
 
-Given a rally and a tactical question, RallyMotionReasoner traces the relevant stroke sequence, identifies decisive actions, and produces an evidence-grounded answer. Its reasoning follows a clear path:
+The runtime loads `trajectory_expert.pt` and `visual_expert.pt` from one expert directory. It decodes hit and bounce events with temporal suppression. Bounce events remain separate graph cues; they are not converted into player stroke nodes.
 
-<p align="center"><b>Event → Relation → Evidence → Tactic</b></p>
+### Graph and TGTR
 
-## 📰 News
+Hit events become stroke nodes. Bounce events provide timing context such as the gap before or after a stroke. TGTR receives:
 
-- **[2026.08]** 🎉 Core model code and training interfaces are released.
-- **[2026.08]** 📄 The RallyMotionReasoner preprint is available on [arXiv](https://arxiv.org/abs/2608.12920).
-- **Coming next:** TRACE access instructions and pretrained checkpoints.
+- 800-dimensional frame descriptors;
+- 24-dimensional motion statistics derived from those descriptors;
+- shot timing and event attributes;
+- temporal relations between neighboring strokes;
+- same-player relations where the hitter is known;
+- bounce-aware structural tokens.
 
-## ✨ Highlights
+The graph loader and event exporter use the same structured feature payload, so offline TGTR data and online inference share the frame alignment contract.
 
-- **Contact-grounded perception:** every evidence stroke is anchored to its racket-ball contact frame.
-- **Action-chain reasoning:** temporal progression and same-player decisions are modeled jointly.
-- **Question-aware evidence:** the Evidence Router retrieves supporting strokes and key actions.
-- **Grounded generation:** Qwen3-VL answers from sparse global context, local evidence windows, and predicted events.
+### Evidence-grounded generation
 
-## 🧩 TRACE Benchmark
+The evidence router scores candidate strokes and key actions for a tactical question. Key-action probability is computed from the conditional key score and evidence score. The generator receives validated candidate identifiers, their evidence frames, sparse global context, and predicted event information. It must return the canonical answer fields defined in [`src/tennisvar/schema.py`](src/tennisvar/schema.py).
 
-<p align="center">
-  <img src="docs/public/trace-figure.png" width="96%" alt="TRACE benchmark overview">
-</p>
+## Requirements
 
-**TRACE** (Tactical Reasoning with Action-Chain Evidence in Tennis) contains **11,189 rally videos**, **41,485 stroke events**, **25,429 tactical units**, and **11,189 evidence-grounded question-answer pairs**. It connects fine-grained stroke perception with factual, tactical, and decision-level reasoning.
+- Python 3.10 or newer
+- PyTorch 2.1 or newer
+- OpenCV and DINOv3 dependencies for video event extraction
+- CUDA is recommended for model inference and required by most large-model training setups
 
-> Tennis broadcasts may be controlled by third-party rights holders. We are evaluating a research-friendly TRACE release procedure that does not redistribute protected footage.
-
-## 🏗️ Method
-
-<p align="center">
-  <img src="docs/public/tennisvar-figure.png" width="96%" alt="RallyMotionReasoner framework">
-</p>
-
-RallyMotionReasoner combines three core components:
-
-1. **Region Motion Event Detector** converts a continuous rally into explicit hit and bounce events.
-2. **Tactical Graph-Guided Temporal Reasoner (TGTR)** models temporal and same-player relations.
-3. **Qwen3-VL Generator** turns routed visual evidence and predicted events into a grounded tactical answer.
-
-The current TGTR structure, region-motion event detector, preceding fixes, and research rationale are documented in
-[`docs/algorithm.md`](docs/algorithm.md). It is an algorithm design update; no reproduced training result is claimed.
-
-## 📊 Results
-
-<p align="center">
-  <img src="docs/public/result-figure.png" width="92%" alt="RallyMotionReasoner qualitative results">
-</p>
-
-RallyMotionReasoner produces structured evidence chains together with open-ended tactical explanations, making its answers easier to inspect than ungrounded video-language generation.
-
-## 🚀 Get Started
-
-**Requirements:** Python ≥ 3.10, PyTorch ≥ 2.1, and CUDA for Qwen3-VL LoRA training.
+Install the package and optional training dependencies:
 
 ```bash
 git clone https://github.com/ZSHYC/RallyMotionReasoner.git
 cd RallyMotionReasoner
-
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[train,generation,video]'
+```
 
+Copy the path template and fill in local data and model locations when using the data preparation or training scripts:
+
+```bash
 cp configs/paths.example.yaml configs/paths.local.yaml
 ```
 
-Update `configs/paths.local.yaml` with your local DINOv3, Qwen3-VL, data, and artifact paths.
+## Inputs
 
-### Inference
+A ball trajectory can be a TrackNet JSON payload or a CSV file. The trajectory loader normalizes both formats into the same temporal representation. The event expert directory must contain:
 
-The inference interface is ready. Region expert, TGTR, and LoRA checkpoints are separate research artifacts.
+```text
+region-experts/
+├── trajectory_expert.pt
+└── visual_expert.pt
+```
+
+The video, trajectory, DINOv3 repository/weights, TGTR checkpoint, and optional Qwen model are supplied independently. No hash, fingerprint, or artifact digest is required.
+
+## Commands
+
+Show all available commands:
+
+```bash
+PYTHONPATH=src python -m tennisvar.cli --help
+```
+
+### Prepare graph and QA data
+
+```bash
+PYTHONPATH=src python -m tennisvar.cli prepare-data \
+  --config configs/tennisvar.yaml
+```
+
+This validates configured splits and builds graph/QA artifacts. It does not train a model.
+
+### Run event detection
+
+```bash
+tennisvar predict-events \
+  --video /path/to/rally.mp4 \
+  --ball-track /path/to/trajectory.json \
+  --checkpoint /path/to/region-experts \
+  --dinov3-repo /path/to/dinov3 \
+  --dinov3-weights /path/to/dinov3.pth \
+  --output outputs/events.json
+```
+
+Use `PYTHONPATH=src python -m tennisvar.cli predict-events` when the editable package is not installed. The output contains decoded events, frame scores, frame features, and feature provenance.
+
+### Export events for TGTR
+
+```bash
+tennisvar export-events \
+  --checkpoint /path/to/region-experts \
+  --split train \
+  --experiment-config configs/tennisvar.yaml \
+  --dinov3-repo /path/to/dinov3 \
+  --dinov3-weights /path/to/dinov3.pth \
+  --output outputs/events_train
+```
+
+The exporter reads configured rally videos and TrackNet files, writes predicted event graphs, and stores hit-only frame features using the shared TGTR payload format. Run it separately for `train`, `val`, and `test` when those splits are configured.
+
+### Run the complete pipeline
 
 ```bash
 tennisvar predict \
   --video /path/to/rally.mp4 \
   --ball-track /path/to/trajectory.json \
-  --event-checkpoint /path/to/region-experts/ \
+  --event-checkpoint /path/to/region-experts \
   --tgtr-checkpoint /path/to/tgtr.pt \
   --qwen-model /path/to/Qwen3-VL-8B-Instruct \
   --question "How did the player create the winning opportunity?" \
-  --output result.json
+  --dinov3-repo /path/to/dinov3 \
+  --dinov3-weights /path/to/dinov3.pth \
+  --output outputs/answer.json
 ```
 
-The event checkpoint accepts a `tennis-region-infer` expert directory containing
-`trajectory_expert.pt` and `visual_expert.pt`. The directory is the only event
-detector backend; TGTR and Qwen3-VL training remain separate stages.
+The Qwen model and adapter are optional at the code level; omit them when only structured event and TGTR outputs are needed.
+
+### Train downstream components
+
+Training is separate from event inference and is not required for reading the model structure:
 
 ```bash
 PYTHONPATH=src python scripts/train_tgtr.py \
@@ -132,45 +168,34 @@ PYTHONPATH=src torchrun --nproc-per-node=8 scripts/train_qwen_lora.py \
   --report outputs/qwen_lora.json
 ```
 
-`tennisvar export-events --checkpoint /path/to/region-experts --split train`
-exports graphs and hit features for TGTR using the configured frame and TrackNet
-roots. Repeat for validation; TrackNet files are `<root>/<split>/<rally>.json`
-or `.csv`. These commands are usage instructions, not reproduced results.
+These commands describe available interfaces only. No training or numerical reproduction is part of this repository update.
 
-## 📦 Release Status
-
-| Component | Status |
-| --- | --- |
-| Paper and project page | ✅ Available |
-| Region event detector, TGTR and generation code | ✅ Available |
-| TRACE annotations and split metadata | 🔍 Release plan under review |
-| Tennis broadcast videos | ⛔ Not distributed |
-| Pretrained region experts, TGTR and LoRA weights | ⏳ Coming soon |
-
-## 🗂️ Repository Layout
+## Repository layout
 
 ```text
-configs/                 Paper-aligned configuration
-scripts/                 TGTR and Qwen3-VL training entry points
-src/tennisvar/           Region event, TGTR and generation code
-tests/                    Lightweight unit tests
-docs/                     Project website and visual assets
+configs/                         YAML experiment and path configuration
+scripts/train_tgtr.py            TGTR training entry point
+scripts/train_qwen_lora.py       Qwen LoRA training entry point
+src/tennisvar/event_parsing/     event model, features, graph, decoder, runtime
+src/tennisvar/features/           trajectory input and normalization
+src/tennisvar/tactical_reasoning/ TGTR, motion adapter, evidence routing
+src/tennisvar/generation/        structured generation and manifest handling
+src/tennisvar/pipeline.py        end-to-end event → TGTR → generation flow
+tests/                           lightweight contract and shape tests
+docs/algorithm.md                algorithm and interface notes
 ```
 
-## 📝 Citation
+## Validation
 
-```bibtex
-@article{mei2026tennisvar,
-  title   = {RallyMotionReasoner: A Stroke-Evidence-Grounded Multimodal Large Language Model for Tactical Reasoning in Tennis Videos},
-  author  = {Mei, Yifan and Shi, Qingling and Wu, Changli and Rao, Jiayuan and Ji, Jiayi and Cao, Liujuan},
-  journal = {arXiv preprint arXiv:2608.12920},
-  year    = {2026}
-}
+Run the lightweight checks used for code changes:
+
+```bash
+ruff check src scripts tests
+PYTHONPATH=src pytest -q
 ```
 
-## ✅ TODO
+The tests validate tensor shapes, masked fusion behavior, event graph semantics, feature alignment, TGTR contracts, configuration validation, and structured output fields. They do not run training or real video inference.
 
-- [x] Release the paper and project page
-- [x] Release the core implementation
-- [ ] Release pretrained checkpoints
-- [ ] Announce the TRACE access procedure
+## License
+
+See [`LICENSE`](LICENSE) for the applicable license and attribution requirements.
