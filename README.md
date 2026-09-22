@@ -110,7 +110,7 @@ This validates configured splits and builds graph/QA artifacts. It does not trai
 ### Run event detection
 
 ```bash
-tennisvar predict-events \
+rallymotionreasoner predict-events \
   --video /path/to/rally.mp4 \
   --ball-track /path/to/trajectory.json \
   --checkpoint /path/to/region-experts \
@@ -124,7 +124,7 @@ Use `PYTHONPATH=src python -m tennisvar.cli predict-events` when the editable pa
 ### Export events for TGTR
 
 ```bash
-tennisvar export-events \
+rallymotionreasoner export-events \
   --checkpoint /path/to/region-experts \
   --split train \
   --experiment-config configs/tennisvar.yaml \
@@ -138,7 +138,7 @@ The exporter reads configured rally videos and TrackNet files, writes predicted 
 ### Run the complete pipeline
 
 ```bash
-tennisvar predict \
+rallymotionreasoner predict \
   --video /path/to/rally.mp4 \
   --ball-track /path/to/trajectory.json \
   --event-checkpoint /path/to/region-experts \

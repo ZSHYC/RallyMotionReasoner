@@ -1,199 +1,82 @@
-# TennisVAR algorithm update
+# RallyMotionReasoner algorithm
 
-This document records the algorithm changes made after the original TennisVAR
-implementation and the preceding `724b5e3` update. It describes the intended
-model structure only; no training run or numerical reproduction is claimed.
-
-## Current pipeline
+RallyMotionReasoner turns a tennis rally into explicit events, graph relations, and question-conditioned evidence. The implementation is organized as one inference path:
 
 ```text
-Region motion event features
-  -> structured stroke state (ball/contact masks and normalized times)
-  -> semantic + visual stroke tokenizer
-  -> local multiscale temporal mixer (depthwise 3/5-frame paths)
-  -> relation-temporal graph Transformer
-  -> question-conditioned evidence/key-action router
-  -> label heads and Qwen3-VL structured generation
+trajectory + video
+  -> Region Motion Event Model
+  -> hit/bounce event graph
+  -> TGTR graph reasoning
+  -> evidence routing
+  -> optional grounded generation
 ```
 
-The graph still has the two task-defined directed relations
-`temporal_next` and `same_player_next`. The update increases how those
-relations are used rather than inventing speculative edge types.
+## 1. Region Motion Event Model
 
-## Region event detector
+The event detector combines two expert streams.
 
-The event detector accepts the `tennis-region-infer` expert directory as its
-only event artifact. A directory containing `trajectory_expert.pt` and
-`visual_expert.pt` selects the trajectory and five-view region experts directly.
+### TrajectoryExpert
 
-The trajectory branch represents each frame with normalized position,
-visibility, velocity, acceleration, turning, curvature, validity, and the
-sampled time offset (11 values). It reads a 0.4-second, 25-sample window. The
-visual branch encodes one full frame and four 55%-area corner crops with the
-shared DINOv3 CLS encoder, producing 3840 values per frame over a 1.6-second,
-49-sample window. Each branch predicts eventness and event type; their product
-scores are averaged 1:1 and decoded with per-class radius-5 NMS.
+`src/tennisvar/features/ball_trajectory.py` accepts TrackNet JSON or CSV and normalizes it into fixed temporal rows. Each row contains ball position, motion derivatives, visibility, and a validity indicator. The trajectory encoder models short-term movement and preserves the distinction between a valid temporal slot and a visible ball observation.
 
-`bounce` is retained as a physical event cue but is not turned into a stroke
-node. Predicted `hit` events remain graph stroke nodes, while bounce frames are
-stored beside the graph for temporal supervision and later contact-aware
-extensions. This prevents a ball-ground interaction from being mistaken for a
-player action or corrupting same-player relations.
+### VisualExpert
 
-For region graphs, the nearest preceding and following bounce gaps are also
-encoded as structural stroke tokens. TGTR can use bounce timing as context
-without adding bounce nodes or changing player-relation semantics.
+`src/tennisvar/event_parsing/features.py` extracts DINOv3 features for the full frame and four corner crops. The visual expert encodes global court context and local player regions without adding a separate event model.
 
-`RegionFusionEventModel` adds bidirectional motion-to-region and
-region-to-motion cross-attention plus the attribute heads. It is the joint
-training structure; the runtime expert directory preserves the published
-independent expert weights and fuses their event probabilities at inference.
+### Cross-stream fusion
 
-The integration is based on
-[`tennis-region-infer`](https://github.com/ZSHYC/tennis-region-infer),
-Trajectory Attention/Motionformer ([arXiv:2106.05392](https://arxiv.org/abs/2106.05392)),
-and T-DEED ([arXiv:2404.05392](https://arxiv.org/abs/2404.05392)). These
-references motivate the representation and temporal design; this repository
-does not run training, inference reproduction, or report a new metric.
+`src/tennisvar/event_parsing/model.py` uses bidirectional cross-attention: trajectory tokens attend to visual regions, while visual regions attend to trajectory context. Invalid trajectory slots and missing visual regions are masked before attention and pooling. Event heads predict eventness, event type, hitter, and optional technique attributes.
 
-## TGTR changes
+The runtime in `src/tennisvar/event_parsing/runtime.py` loads `trajectory_expert.pt` and `visual_expert.pt`, evaluates dense windows, fuses the expert scores, and decodes hit and bounce events. Bounce is a graph cue, not a player stroke.
 
-### Stroke representation
+## 2. Event graph and feature contract
 
-The tokenizer now receives the six available structured values for each stroke:
+`src/tennisvar/event_parsing/graph.py` creates stroke nodes from hit events and stores bounce events separately. Temporal edges connect neighboring strokes. Same-player edges are added only when the hitter is known. Stroke nodes retain event timing, confidence, attributes, and bounce gaps.
 
-`ball_x`, `ball_y`, `ball_visible`, `ball_mask`, `contact_frame`, and
-`contact_mask`.
+`shot_feature_payload` in `src/tennisvar/event_parsing/features.py` is the shared export contract for offline data and online inference. It aligns hit frames with 800-dimensional frame descriptors and exposes a 24-dimensional motion slice for downstream reasoning.
 
-They are projected once and fused with the existing 800-dimensional event
-feature. Optional cached motion statistics remain supported through the existing
-`motion_feature_dim` setting (0 or 24). Missing values are represented
-by their masks and zero-filled coordinates, so the model does not confuse an
-unobserved ball with an observed coordinate at the origin.
+## 3. TGTR
 
-The local mixer applies depthwise temporal convolutions with kernel sizes 3 and
-5, then a gated residual fusion. This keeps contact-local detail while giving a
-stroke access to short tactical context before graph reasoning.
+TGTR consumes the event graph, shot descriptors, motion statistics, and structural tokens. It models:
 
-### Relation-temporal graph block
+- temporal progression across strokes;
+- same-player tactical relations;
+- bounce-aware timing;
+- padding and missing observations through masks;
+- frame and motion evidence alongside graph tokens.
 
-For a directed edge (j\rightarrow i) with relation (r_{ij}), the block first
-adds a degree-normalized message:
+The implementation is in `src/tennisvar/tactical_reasoning/`. Event data is generated with `event_backend=region_fusion`; no alternate event backend is maintained.
 
-\[
-m_i = \sum_{j\rightarrow i}
-\frac{\operatorname{MLP}([h_j,e_{r_{ij}}])}{\sqrt{\max(1,d_i)}}.
-\]
+## 4. Evidence routing and generation
 
-The resulting tokens use multi-head self-attention. Each attention logit gets a
-learned relation bias and a signed bucketed time bias:
+The evidence router ranks candidate strokes and key actions using the question representation and TGTR state. Key-action scores combine evidence and conditional key probabilities. The generator receives validated candidate IDs, selected evidence frames, global context, and predicted event information. Output validation is defined in `src/tennisvar/schema.py`.
 
-\[
-\operatorname{logit}_{ij}^{(k)} \leftarrow
-\operatorname{logit}_{ij}^{(k)} + b_{r_{ij}}^{(k)} + t_{q(\Delta f_{ij})}^{(k)}.
-\]
+## 5. Data and checkpoints
 
-`node_frames` are normalized contact frames. The signed buckets distinguish
-past, current, and future context while clipping large gaps. Padding keys are
-masked and padded query outputs are zeroed after every block. Three blocks are
-the default configuration in `configs/tennisvar.yaml`; the constructor remains
-parameterized for other research settings.
+The repository keeps checkpoint and data validation structural: required files, dimensions, label maps, vocabulary, and schemas are checked directly. It does not compute artifact hashes, fingerprints, or checksums.
 
-Graph pooling is learned rather than an unweighted mean, allowing the model to
-preserve the most decision-relevant stroke before evidence routing.
+External artifacts are intentionally separate:
 
-### Evidence routing
+```text
+region-experts/
+├── trajectory_expert.pt
+└── visual_expert.pt
+```
 
-Evidence remains a multi-label prediction. The router now converts each
-evidence logit with an independent sigmoid gate and normalizes only for the
-context mixture. This avoids making one stroke win a softmax competition when a
-tactical explanation needs several supporting strokes. Key-action logits remain
-conditioned by the evidence log-probability, so a decisive action stays inside
-the predicted evidence chain.
+TGTR and optional Qwen adapters are loaded by their own stages. This separation keeps event extraction, graph reasoning, and generation independently inspectable.
 
-The reasoner also exposes auxiliary per-stroke heads for normalized ball
-position, ball visibility, and contact frame. When visual supervision is
-available, the existing masks determine which targets contribute to the loss;
-without that supervision these terms remain inactive. Evidence and key-action
-BCE terms use a capped batch-local positive weight, which prevents sparse event
-labels from being optimized as an all-negative problem.
+## 6. Code map
 
-Key actions are evaluated as a multi-label set. Thresholded key predictions
-with an argmax fallback are compared with set F1, while exact-set accuracy is
-retained as a secondary diagnostic. Model selection uses key-action F1 so its
-objective matches the target representation.
+| Area | Location | Responsibility |
+| --- | --- | --- |
+| Trajectory input | `src/tennisvar/features/ball_trajectory.py` | JSON/CSV loading and normalization |
+| Event model | `src/tennisvar/event_parsing/model.py` | trajectory/visual experts and fusion |
+| Event features | `src/tennisvar/event_parsing/features.py` | DINO features and TGTR payloads |
+| Event runtime | `src/tennisvar/event_parsing/runtime.py` | expert loading and decoding |
+| Event graph | `src/tennisvar/event_parsing/graph.py` | hit/bounce nodes and relations |
+| TGTR | `src/tennisvar/tactical_reasoning/` | graph-temporal reasoning |
+| Generation | `src/tennisvar/generation/` | structured grounded answers |
 
-## What the preceding update fixed
+## 7. Verification scope
 
-The previous update introduced optimal one-to-one temporal matching, explicit
-null/invisible-ball handling, frame-rate-aware deltas, event masking and
-sinusoidal token positions, CJK tokenization, removal of train-only QA metadata,
-evidence/key subset constraints, unknown-hitter graph handling, degree-normalized
-messages, padding-safe TGTR tokens, and structured pipeline fields. These are
-kept in TGTR and form its data contract.
-
-## Research basis and scope
-
-The design is informed by the following public directions:
-
-- [TennisVAR](https://arxiv.org/abs/2608.12920): event-relation-evidence-tactic
-  decomposition used as the project baseline.
-- [T-DEED](https://arxiv.org/abs/2404.05392) and precise event spotting work:
-  local multiscale temporal discrimination.
-- [VideoITG](https://arxiv.org/html/2507.13353v2) and
-  [UniTime](https://arxiv.org/abs/2506.18883): adaptive and multiscale temporal
-  grounding.
-- [QGAC-TR](https://aclanthology.org/2024.findings-emnlp.176/):
-  question-guided, answer-calibrated temporal localization.
-- [GraphThinker](https://arxiv.org/html/2602.17555v3): explicit event relations
-  as a grounding scaffold for video reasoning.
-- ViTED (CVPR 2025), TimeCraft (ECCV 2024), and TimeRefine (WACV 2026):
-  evidence chains and coarse-to-fine temporal boundaries. Only the lightweight
-  parts compatible with the current labels are adopted here; no new annotation
-  or external agent loop is assumed.
-- [RacketVision](https://github.com/OrcustD/RacketVision) and
-  [TOTNet](https://arxiv.org/html/2508.09650): perception-side motivation for
-  preserving contact and occlusion-aware cues in the event representation.
-
-These references motivate architectural choices; they do not imply that the
-repository reproduces their datasets, checkpoints, or reported metrics.
-
-## Checkpoint and evaluation boundary
-
-TGTR changes parameter shapes in the graph and stroke encoders. A TGTR
-checkpoint used with the region detector must declare
-`event_backend=region_fusion` and be trained from graphs generated with the
-same hit-node/bounce-cue contract. No migration layer or numerical result is
-claimed; lightweight checks only validate tensor contracts and graph semantics.
-
-The training entry point records `event_backend=region_fusion` and reads the
-actual exported hit features. Training does not require test-split artifacts.
-
-## Module replacement and cleanup
-
-`event_parsing/model.py`, `features.py`, and `runtime.py` now contain the region
-experts, feature extraction, and sole event predictor. Trajectory CSV/JSON input
-and normalization live in `features/ball_trajectory.py`. The superseded event
-model, trainer, cache decoder, and compatibility aliases have been removed.
-The 800-D frame descriptor remains because TGTR consumes it; it is not an old
-event detector. `export-events` uses the current predictor and exports hit-only
-features through the same payload builder as live TGTR inference.
-
-The joint cross-attention model and attribute heads remain available as model
-structure. Published independent expert checkpoints do not contain those
-parameters: their runtime returns unknown attributes rather than invented
-predictions, so same-player edges require a predicted hitter. Cross-attention
-masks exclude padded slots, including an entirely missing stream. The trajectory
-`valid` channel marks real temporal slots; `detected` separately marks visibility.
-
-Artifact digest computation and fingerprint metadata have been removed throughout
-data preparation, event features, checkpoints, and generation. QA identifiers use
-split, rally, and question index. Resume compares configuration and label/vocabulary
-maps directly. Structural dimensions, required files, and schema checks remain.
-
-This pass also fixes the stored TGTR threshold being ignored, candidate indexing
-for rallies exceeding 32 hits, CPU best-weight snapshots sharing mutable storage,
-and distributed sample padding when there are fewer samples than ranks. Key-action
-probability is now the product of its conditional probability and evidence
-probability. Final answer evidence follows the generator's validated candidate IDs;
-TGTR predictions remain separately available in provenance.
+The lightweight test suite checks tensor shapes, masking, event graph semantics, frame alignment, TGTR contracts, configuration validation, and structured outputs. It does not train models, process real videos, or report reproduced numerical results.

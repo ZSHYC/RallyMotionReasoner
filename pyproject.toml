@@ -5,18 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rallymotionreasoner"
 version = "0.1.0"
-description = "Stroke-evidence-grounded tactical reasoning for tennis videos"
+description = "Motion-aware event grounding and tactical reasoning for tennis videos"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [
-  {name = "Yifan Mei"},
-  {name = "Qingling Shi"},
-  {name = "Changli Wu"},
-  {name = "Jiayuan Rao"},
-  {name = "Jiayi Ji"},
-  {name = "Liujuan Cao"},
-]
-keywords = ["tennis", "video understanding", "multimodal reasoning", "evidence grounding"]
+keywords = ["tennis", "video understanding", "motion modeling", "evidence grounding"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3",
@@ -42,10 +34,9 @@ video = ["opencv-python-headless>=4.8,<5"]
 dev = ["pytest>=8,<9", "ruff>=0.9,<1"]
 
 [project.scripts]
-rallymotionreasoner = "rallymotionreasoner.cli:main"
+rallymotionreasoner = "tennisvar.cli:main"
 
 [project.urls]
-Homepage = "https://whynotgit2025.github.io/RallyMotionReasoner/"
 Repository = "https://github.com/ZSHYC/RallyMotionReasoner"
 Issues = "https://github.com/ZSHYC/RallyMotionReasoner/issues"
 
