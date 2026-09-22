@@ -8,7 +8,7 @@ from typing import Any
 
 from tennisvar.graph import build_graph, match_id_from_clip, validate_graph
 from tennisvar.io import write_json, write_jsonl
-from tennisvar.schema_v2 import normalize_effect
+from tennisvar.schema import normalize_effect
 from tennisvar.video import list_images
 
 DATASET_NAME = "trace"

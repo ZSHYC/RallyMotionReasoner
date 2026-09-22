@@ -20,7 +20,7 @@ from tennisvar.generation.manifest import (
 )
 from tennisvar.generation.sft import prepare_qwen_sft_item, structured_video_messages
 from tennisvar.io import read_json, read_jsonl, write_json
-from tennisvar.schema_v2 import REQUIRED_SCHEMA_V2
+from tennisvar.schema import REQUIRED_SCHEMA
 from tennisvar.tracks import TRACK_TGTR_ASSISTED_PRED, normalize_track
 
 
@@ -110,7 +110,7 @@ def _validate_rows(
         metadata = row.get("e2e_metadata") or {}
         if metadata.get("split") != expected_split:
             raise ValueError(f"Qwen {label} row split mismatch for {qa_id}: {metadata.get('split')} != {expected_split}")
-        if metadata.get("media_mode") != "videos" or list(metadata.get("schema_fields") or []) != list(REQUIRED_SCHEMA_V2):
+        if metadata.get("media_mode") != "videos" or list(metadata.get("schema_fields") or []) != list(REQUIRED_SCHEMA):
             raise ValueError(f"Qwen {label} row media/schema contract mismatch for {qa_id}")
         if metadata.get("graph_source") != "region_fusion_predicted":
             raise ValueError(f"Qwen {label} row lacks predicted-event provenance: {qa_id}")
@@ -202,7 +202,7 @@ def _save_checkpoint(
             processor.save_pretrained(staging)
             torch.save(
                 {
-                    "schema": "tennisvar.qwen_native_trainer.v2",
+                    "schema": "tennisvar.qwen_native_trainer",
                     "global_step": global_step,
                     "next_epoch": next_epoch,
                     "next_iteration": next_iteration,
@@ -379,7 +379,7 @@ def main() -> int:
     start_epoch, resume_iteration, global_step = 1, 0, 0
     if resume_checkpoint:
         state = torch.load(resume_checkpoint / "trainer_state.pt", map_location="cpu", weights_only=False)
-        if state.get("schema") != "tennisvar.qwen_native_trainer.v2":
+        if state.get("schema") != "tennisvar.qwen_native_trainer":
             raise ValueError(f"invalid native Qwen trainer state: {resume_checkpoint}")
         expected_state = {
             "world_size": world_size,
@@ -421,7 +421,7 @@ def main() -> int:
         "base_model": str(args.model),
         "train_data": str(args.train_data),
         "val_data": str(args.val_data),
-        "output_schema_fields": REQUIRED_SCHEMA_V2,
+        "output_schema_fields": REQUIRED_SCHEMA,
         "seed": args.seed,
         "trainer": "native_torch_ddp_peft",
         "world_size": world_size,

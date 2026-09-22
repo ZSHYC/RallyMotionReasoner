@@ -5,9 +5,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from tennisvar.schema_v2 import REQUIRED_SCHEMA_V2, validate_prediction_payload
+from tennisvar.schema import REQUIRED_SCHEMA, validate_prediction_payload
 
-REQUIRED_QWEN_FIELDS = set(REQUIRED_SCHEMA_V2)
+REQUIRED_QWEN_FIELDS = set(REQUIRED_SCHEMA)
 
 
 def parse_qwen_json(raw: str) -> dict[str, Any] | None:

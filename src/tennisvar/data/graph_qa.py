@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 
 from tennisvar.evaluation.matching import optimal_temporal_matching
 from tennisvar.io import read_jsonl
-from tennisvar.schema_v2 import ANSWER_TYPES, ANSWERABILITY, CAUSAL_STRENGTHS, OBSERVED_EFFECTS, answer_payload
+from tennisvar.schema import ANSWER_TYPES, ANSWERABILITY, CAUSAL_STRENGTHS, OBSERVED_EFFECTS, answer_payload
 from tennisvar.tactical_reasoning.graph_transformer import EDGE_TYPE_TO_ID
 
 # Keep Latin words intact while giving CJK text character-level coverage.
@@ -236,7 +236,7 @@ def load_visual_features(
         return zeros
     if strict:
         if (
-            data.get("schema") != "tennisvar.tgtr_event_features.v2"
+            data.get("schema") != "tennisvar.tgtr_event_features"
             or data.get("source") != "region_fusion_predicted"
             or data.get("rally_id") != rally_id
             or data.get("split") != split

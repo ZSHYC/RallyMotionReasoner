@@ -40,7 +40,7 @@ def shot_feature_payload(
     indices = [by_frame[int(shot["frame"])] for shot in strokes]
     selected = frame_features[indices].float().cpu()
     return {
-        "schema": "tennisvar.tgtr_event_features.v2",
+        "schema": "tennisvar.tgtr_event_features",
         "source": "region_fusion_predicted",
         "rally_id": graph["rally_id"],
         "split": split,

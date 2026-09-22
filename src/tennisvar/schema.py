@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-REQUIRED_SCHEMA_V2 = [
+REQUIRED_SCHEMA = [
     "answer",
     "answer_type",
     "level_1",
@@ -19,7 +19,7 @@ REQUIRED_SCHEMA_V2 = [
 ]
 
 # New temporal key-action field is optional for backwards-compatible reads.
-OPTIONAL_SCHEMA_V2 = ["key_action_frames"]
+OPTIONAL_SCHEMA = ["key_action_frames"]
 
 STRICT_ANSWER_FIELDS = [
     "answer",
@@ -94,7 +94,7 @@ def validate_prediction_payload(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return ["prediction must be a JSON object"]
     errors: list[str] = []
-    missing = [field for field in REQUIRED_SCHEMA_V2 if field not in value]
+    missing = [field for field in REQUIRED_SCHEMA if field not in value]
     if missing:
         errors.append(f"missing fields: {missing}")
     if "answer" in value and not isinstance(value["answer"], str):
@@ -203,7 +203,7 @@ def answerability_for_qa_type(qa_type: str | None, current: Any = None) -> str:
     return "partially_answerable" if str(qa_type or "") in COUNTERFACTUAL_QA_TYPES else "answerable"
 
 
-def convert_answer_to_v2(answer: dict[str, Any] | None, *, qa_type: str | None = None) -> dict[str, Any]:
+def convert_answer(answer: dict[str, Any] | None, *, qa_type: str | None = None) -> dict[str, Any]:
     answer = answer or {}
     answerability = answerability_for_qa_type(qa_type, answer.get("answerability"))
     level_1 = answer.get("level_1", answer.get("level1_stage"))
@@ -228,28 +228,28 @@ def convert_answer_to_v2(answer: dict[str, Any] | None, *, qa_type: str | None =
 
 def answer_payload(row: dict[str, Any]) -> dict[str, Any]:
     if isinstance(row.get("gold_answer"), dict):
-        return convert_answer_to_v2(row["gold_answer"], qa_type=row.get("qa_type"))
+        return convert_answer(row["gold_answer"], qa_type=row.get("qa_type"))
     if isinstance(row.get("answer"), dict):
-        return convert_answer_to_v2(row["answer"], qa_type=row.get("qa_type"))
-    return convert_answer_to_v2({}, qa_type=row.get("qa_type"))
+        return convert_answer(row["answer"], qa_type=row.get("qa_type"))
+    return convert_answer({}, qa_type=row.get("qa_type"))
 
 
-def convert_row_to_v2(row: dict[str, Any]) -> dict[str, Any]:
+def convert_row(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     gold = answer_payload(row)
     out["gold_answer"] = gold
     out.setdefault("answer", gold)
-    out["schema_version"] = "eval_v2"
+    out["schema_version"] = "eval"
     return out
 
 
-def prediction_to_v2(pred: dict[str, Any]) -> dict[str, Any]:
+def prediction_to(pred: dict[str, Any]) -> dict[str, Any]:
     if pred.get("parse_error"):
         out = {"qa_id": pred.get("qa_id"), "rally_id": pred.get("rally_id"), "parse_error": pred.get("parse_error")}
-        for field in REQUIRED_SCHEMA_V2 + OPTIONAL_SCHEMA_V2:
+        for field in REQUIRED_SCHEMA + OPTIONAL_SCHEMA:
             out.setdefault(field, None if field not in {"evidence_shot_ids", "key_action_shot_ids", "evidence_frames", "key_action_frames"} else [])
         return out
-    out = convert_answer_to_v2(pred, qa_type=pred.get("qa_type"))
+    out = convert_answer(pred, qa_type=pred.get("qa_type"))
     out["qa_id"] = pred.get("qa_id")
     if pred.get("rally_id"):
         out["rally_id"] = pred.get("rally_id")

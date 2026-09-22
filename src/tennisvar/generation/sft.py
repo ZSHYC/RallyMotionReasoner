@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from tennisvar.schema_v2 import OPTIONAL_SCHEMA_V2, REQUIRED_SCHEMA_V2, validate_prediction_payload
+from tennisvar.schema import OPTIONAL_SCHEMA, REQUIRED_SCHEMA, validate_prediction_payload
 
 
 def structured_video_messages(row: dict[str, Any], *, include_answer: bool) -> list[dict[str, Any]]:
@@ -36,8 +36,8 @@ def structured_video_messages(row: dict[str, Any], *, include_answer: bool) -> l
             payload = json.loads(answer)
         except json.JSONDecodeError as exc:
             raise ValueError(f"Qwen SFT assistant target is not JSON: {row.get('qa_id')}") from exc
-        allowed = set(REQUIRED_SCHEMA_V2) | set(OPTIONAL_SCHEMA_V2)
-        if not isinstance(payload, dict) or not set(REQUIRED_SCHEMA_V2).issubset(payload) or not set(payload).issubset(allowed):
+        allowed = set(REQUIRED_SCHEMA) | set(OPTIONAL_SCHEMA)
+        if not isinstance(payload, dict) or not set(REQUIRED_SCHEMA).issubset(payload) or not set(payload).issubset(allowed):
             raise ValueError(f"Qwen SFT assistant schema mismatch: {row.get('qa_id')}")
         violations = validate_prediction_payload(payload)
         if violations:

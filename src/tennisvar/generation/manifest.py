@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from tennisvar.schema_v2 import REQUIRED_SCHEMA_V2
+from tennisvar.schema import REQUIRED_SCHEMA
 from tennisvar.tracks import normalize_track
 
-QWEN_ADAPTER_SCHEMA = "tennisvar.qwen_lora.v2"
+QWEN_ADAPTER_SCHEMA = "tennisvar.qwen_lora"
 MANIFEST_NAME = "tennisvar_manifest.json"
 
 
@@ -23,7 +23,7 @@ def load_qwen_adapter_manifest(adapter: Path, *, expected_track: str | None = No
     missing = sorted(required - set(payload))
     if missing:
         raise ValueError(f"Qwen adapter manifest is missing fields: {missing}")
-    if list(payload.get("output_schema_fields") or []) != list(REQUIRED_SCHEMA_V2):
+    if list(payload.get("output_schema_fields") or []) != list(REQUIRED_SCHEMA):
         raise ValueError("Qwen adapter output schema fields do not match the runtime contract")
     if expected_track is not None and normalize_track(payload["track"]) != normalize_track(expected_track):
         raise ValueError(f"Qwen adapter track mismatch: {payload['track']} != {expected_track}")
