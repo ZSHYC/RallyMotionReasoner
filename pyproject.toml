@@ -3,7 +3,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tennisvar"
+name = "rallymotionreasoner"
 version = "0.1.0"
 description = "Stroke-evidence-grounded tactical reasoning for tennis videos"
 readme = "README.md"
@@ -42,12 +42,12 @@ video = ["opencv-python-headless>=4.8,<5"]
 dev = ["pytest>=8,<9", "ruff>=0.9,<1"]
 
 [project.scripts]
-tennisvar = "tennisvar.cli:main"
+rallymotionreasoner = "rallymotionreasoner.cli:main"
 
 [project.urls]
-Homepage = "https://whynotgit2025.github.io/TennisVAR/"
-Repository = "https://github.com/ZSHYC/TennisVAR"
-Issues = "https://github.com/ZSHYC/TennisVAR/issues"
+Homepage = "https://whynotgit2025.github.io/RallyMotionReasoner/"
+Repository = "https://github.com/ZSHYC/RallyMotionReasoner"
+Issues = "https://github.com/ZSHYC/RallyMotionReasoner/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

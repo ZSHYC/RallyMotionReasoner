@@ -1,4 +1,4 @@
-<h1 align="center">🎾 TennisVAR</h1>
+<h1 align="center">🎾 RallyMotionReasoner</h1>
 
 <h3 align="center">Stroke-Evidence-Grounded Tactical Reasoning for Tennis Videos</h3>
 
@@ -20,27 +20,27 @@
 </p>
 
 <p align="center">
-  <a href="https://whynotgit2025.github.io/TennisVAR/"><img src="https://img.shields.io/badge/Project-Page-2f7d4f?style=for-the-badge" alt="Project Page"></a>
+  <a href="https://whynotgit2025.github.io/RallyMotionReasoner/"><img src="https://img.shields.io/badge/Project-Page-2f7d4f?style=for-the-badge" alt="Project Page"></a>
   <a href="https://arxiv.org/abs/2608.12920"><img src="https://img.shields.io/badge/arXiv-2608.12920-b31b1b?style=for-the-badge" alt="Paper"></a>
   <img src="https://img.shields.io/badge/TRACE-Coming_Soon-f0a202?style=for-the-badge" alt="Dataset coming soon">
   <img src="https://img.shields.io/badge/Models-Coming_Soon-64748b?style=for-the-badge" alt="Models coming soon">
 </p>
 
 
-## 🎬 TennisVAR in Action
+## 🎬 RallyMotionReasoner in Action
 
 <p align="center">
-  <img src="docs/public/tennisvar-demo.gif" width="100%" alt="TennisVAR tactical reasoning demo">
+  <img src="docs/public/tennisvar-demo.gif" width="100%" alt="RallyMotionReasoner tactical reasoning demo">
 </p>
 
-Given a rally and a tactical question, TennisVAR traces the relevant stroke sequence, identifies decisive actions, and produces an evidence-grounded answer. Its reasoning follows a clear path:
+Given a rally and a tactical question, RallyMotionReasoner traces the relevant stroke sequence, identifies decisive actions, and produces an evidence-grounded answer. Its reasoning follows a clear path:
 
 <p align="center"><b>Event → Relation → Evidence → Tactic</b></p>
 
 ## 📰 News
 
 - **[2026.08]** 🎉 Core model code and training interfaces are released.
-- **[2026.08]** 📄 The TennisVAR preprint is available on [arXiv](https://arxiv.org/abs/2608.12920).
+- **[2026.08]** 📄 The RallyMotionReasoner preprint is available on [arXiv](https://arxiv.org/abs/2608.12920).
 - **Coming next:** TRACE access instructions and pretrained checkpoints.
 
 ## ✨ Highlights
@@ -63,10 +63,10 @@ Given a rally and a tactical question, TennisVAR traces the relevant stroke sequ
 ## 🏗️ Method
 
 <p align="center">
-  <img src="docs/public/tennisvar-figure.png" width="96%" alt="TennisVAR framework">
+  <img src="docs/public/tennisvar-figure.png" width="96%" alt="RallyMotionReasoner framework">
 </p>
 
-TennisVAR combines three core components:
+RallyMotionReasoner combines three core components:
 
 1. **Region Motion Event Detector** converts a continuous rally into explicit hit and bounce events.
 2. **Tactical Graph-Guided Temporal Reasoner (TGTR)** models temporal and same-player relations.
@@ -78,18 +78,18 @@ The current TGTR structure, region-motion event detector, preceding fixes, and r
 ## 📊 Results
 
 <p align="center">
-  <img src="docs/public/result-figure.png" width="92%" alt="TennisVAR qualitative results">
+  <img src="docs/public/result-figure.png" width="92%" alt="RallyMotionReasoner qualitative results">
 </p>
 
-TennisVAR produces structured evidence chains together with open-ended tactical explanations, making its answers easier to inspect than ungrounded video-language generation.
+RallyMotionReasoner produces structured evidence chains together with open-ended tactical explanations, making its answers easier to inspect than ungrounded video-language generation.
 
 ## 🚀 Get Started
 
 **Requirements:** Python ≥ 3.10, PyTorch ≥ 2.1, and CUDA for Qwen3-VL LoRA training.
 
 ```bash
-git clone https://github.com/ZSHYC/TennisVAR.git
-cd TennisVAR
+git clone https://github.com/ZSHYC/RallyMotionReasoner.git
+cd RallyMotionReasoner
 
 python -m venv .venv
 source .venv/bin/activate
@@ -161,7 +161,7 @@ docs/                     Project website and visual assets
 
 ```bibtex
 @article{mei2026tennisvar,
-  title   = {TennisVAR: A Stroke-Evidence-Grounded Multimodal Large Language Model for Tactical Reasoning in Tennis Videos},
+  title   = {RallyMotionReasoner: A Stroke-Evidence-Grounded Multimodal Large Language Model for Tactical Reasoning in Tennis Videos},
   author  = {Mei, Yifan and Shi, Qingling and Wu, Changli and Rao, Jiayuan and Ji, Jiayi and Cao, Liujuan},
   journal = {arXiv preprint arXiv:2608.12920},
   year    = {2026}
