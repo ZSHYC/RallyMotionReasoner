@@ -2,22 +2,9 @@ experiment_name: tennisvar_tgtr
 architecture: TennisVAR-TGTR
 seed: 42
 
-event_parsing:
-  appearance_dim: 768
-  motion_dim: 24
-  ball_dim: 8
-  fused_dim: 800
-  hidden_dim: 256
-  num_layers: 3
-  num_heads: 8
-  epochs: 40
-  batch_size: 64
-  learning_rate: 0.0002
-  require_tracknet: true
-
 data:
   dataset: trace
-  graph_source: f3ed
+  graph_source: region_fusion
   include_label_tokens: false
   require_visual_features: true
   use_edges: true
@@ -39,7 +26,7 @@ model:
   dropout: 0.12
 
 feature_extraction:
-  feature_set: f3ed_event_features
+  feature_set: region_fusion_event_features
   feature_dim: 800
   motion_feature_dim: 0
   feature_root_name: trace/tgtr_event_features
@@ -66,10 +53,3 @@ loss_weights:
   answerability: 0.5
   causal_strength: 0.5
   observed_effect: 0.5
-
-generation:
-  model: Qwen3-VL-8B-Instruct
-  lora_rank: 32
-  epochs: 5
-  learning_rate: 0.00002
-  effective_batch_size: 32

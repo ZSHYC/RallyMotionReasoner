@@ -51,9 +51,9 @@ def graph_file(paths: dict[str, Path], split: str, source: str, cfg: dict[str, A
     if source == "gold":
         root = dataset_relative_root(paths, cfg, "graph_root_name", "graphs")
         return root / f"sgtr_graph_{name}_{split}.jsonl"
-    if source in {"f3ed", "none"}:
-        root = dataset_relative_root(paths, cfg, "graph_root_name", "graphs_f3ed")
-        return root / f"sgtr_graph_f3ed_{name}_{split}.jsonl"
+    if source == "region_fusion":
+        root = dataset_relative_root(paths, cfg, "graph_root_name", "graphs_region_fusion")
+        return root / f"sgtr_graph_region_fusion_{name}_{split}.jsonl"
     raise ValueError(f"unknown graph source: {source}")
 
 
@@ -235,16 +235,11 @@ def load_visual_features(
             raise RuntimeError(f"cannot load visual features {path}: {type(exc).__name__}: {exc}") from exc
         return zeros
     if strict:
-        fingerprint = data.get("event_checkpoint_data_fingerprint")
         if (
             data.get("schema") != "tennisvar.tgtr_event_features.v2"
-            or data.get("source") != "f3ed_predicted"
+            or data.get("source") != "region_fusion_predicted"
             or data.get("rally_id") != rally_id
             or data.get("split") != split
-            or not isinstance(fingerprint, str)
-            or len(fingerprint) != 64
-            or not isinstance(data.get("event_checkpoint_sha256"), str)
-            or len(data["event_checkpoint_sha256"]) != 64
         ):
             raise ValueError(f"visual feature provenance contract mismatch: {path}")
     tensor = data.get("shot_features")
@@ -274,24 +269,27 @@ def load_motion_features(
     shot_ids: list[int],
     motion_dim: int,
 ) -> list[list[float]]:
-    zeros = [[0.0] * motion_dim for _ in shot_ids]
-    if motion_dim <= 0 or not feature_root:
-        return zeros
+    if motion_dim <= 0:
+        return [[0.0] * motion_dim for _ in shot_ids]
+    if not feature_root:
+        raise ValueError("motion feature root is required when motion features are enabled")
     path = feature_root / split / f"{safe_feature_name(rally_id)}.pt"
     if not path.exists():
-        return zeros
-    try:
-        data = torch.load(path, map_location="cpu", weights_only=False)
-    except Exception:
-        return zeros
+        raise FileNotFoundError(f"missing motion features: {path}")
+    data = torch.load(path, map_location="cpu", weights_only=False)
     tensor = data.get("motion_stats")
     cached_ids = data.get("shot_ids") or []
     if tensor is None:
-        return zeros
+        raise ValueError(f"motion feature file has no motion_stats: {path}")
     if not isinstance(tensor, Tensor):
         tensor = torch.tensor(tensor, dtype=torch.float32)
+    if tensor.ndim != 2 or int(tensor.shape[-1]) != motion_dim:
+        raise ValueError(f"motion feature dimension mismatch in {path}: {tuple(tensor.shape)}")
     by_id = {int(sid): tensor[idx].float().tolist() for idx, sid in enumerate(cached_ids) if idx < tensor.shape[0]}
-    return [by_id.get(int(sid), [0.0] * motion_dim)[:motion_dim] for sid in shot_ids]
+    missing_ids = [int(sid) for sid in shot_ids if int(sid) not in by_id]
+    if missing_ids:
+        raise ValueError(f"motion feature cache {path} is missing shot ids: {missing_ids}")
+    return [by_id[int(sid)][:motion_dim] for sid in shot_ids]
 
 
 @dataclass
@@ -339,7 +337,7 @@ class GraphQADataset(Dataset[EncodedItem]):
         max_node_tokens: int = 24,
         max_strokes: int = 32,
         require_visual_features: bool = False,
-        graph_source: str = "f3ed",
+        graph_source: str = "region_fusion",
         evidence_frame_tolerance: int = 16,
     ) -> None:
         self.items: list[EncodedItem] = []
@@ -413,7 +411,7 @@ class GraphQADataset(Dataset[EncodedItem]):
                     if src_id in sid_to_node and dst_id in sid_to_node:
                         edge_index.append([sid_to_node[src_id], sid_to_node[dst_id]])
                         edge_type.append(EDGE_TYPE_TO_ID[relation])
-            if graph_source == "f3ed":
+            if graph_source == "region_fusion":
                 evidence_ids = match_gold_frames_to_predicted_shots(
                     strokes, gold.get("evidence_frames"), tolerance=evidence_frame_tolerance
                 )
@@ -561,7 +559,7 @@ def make_graph_datasets(
     feature_root: Path | None,
 ) -> tuple[GraphQADataset, GraphQADataset, dict[str, Any]]:
     data_cfg = cfg.get("data", {})
-    graph_source = str(data_cfg.get("graph_source", "f3ed"))
+    graph_source = str(data_cfg.get("graph_source", "region_fusion"))
     include_label_tokens = bool(data_cfg.get("include_label_tokens", True))
     use_edges = bool(data_cfg.get("use_edges", True))
     excluded_edge_types = [str(value) for value in data_cfg.get("excluded_edge_types", [])]
@@ -576,17 +574,14 @@ def make_graph_datasets(
         raise ValueError("data.label_map_source must be 'train' or 'train_val'; using test labels is not allowed")
     train_graphs = read_graphs(graph_file(paths, "train", graph_source, cfg))
     val_graphs = read_graphs(graph_file(paths, "val", graph_source, cfg))
-    visual_enabled = str(cfg.get("module_flags", {}).get("visual_supervision", "none")) != "none"
-    train_visual = read_visual_supervision(visual_supervision_file(paths, cfg, "train")) if visual_enabled else {}
-    val_visual = read_visual_supervision(visual_supervision_file(paths, cfg, "val")) if visual_enabled else {}
+    train_visual = read_visual_supervision(visual_supervision_file(paths, cfg, "train"))
+    val_visual = read_visual_supervision(visual_supervision_file(paths, cfg, "val"))
     vocab = build_vocab(train_rows, train_graphs, min_count=int(data_cfg.get("min_count", 1)), include_label_tokens=include_label_tokens)
     label_maps = build_label_maps(label_rows)
     common = {
         "feature_root": feature_root,
-        "visual_feature_dim": int(cfg.get("feature_extraction", {}).get("feature_dim", 48)),
-        "motion_feature_dim": int(cfg.get("feature_extraction", {}).get("motion_feature_dim", 0))
-        if str(cfg.get("module_flags", {}).get("motion_token_mode", "none")) != "none"
-        else 0,
+        "visual_feature_dim": int(cfg.get("feature_extraction", {}).get("feature_dim", 800)),
+        "motion_feature_dim": int(cfg.get("feature_extraction", {}).get("motion_feature_dim", 0)),
         "include_label_tokens": include_label_tokens,
         "use_edges": use_edges,
         "excluded_edge_types": excluded_edge_types,
@@ -612,11 +607,6 @@ def make_graph_datasets(
         "excluded_edge_types": excluded_edge_types,
         "label_map_source": label_map_source,
         "test_label_leakage": False,
-        "evidence_alignment": "one_to_one_temporal" if graph_source == "f3ed" else "gold_shot_id",
+        "evidence_alignment": "one_to_one_temporal" if graph_source == "region_fusion" else "gold_shot_id",
     }
     return train_ds, val_ds, meta
-
-
-# Compatibility aliases for 0715 checkpoints and scripts. New code must use the
-# dataset-neutral names above.
-TraceGraphDataset = GraphQADataset

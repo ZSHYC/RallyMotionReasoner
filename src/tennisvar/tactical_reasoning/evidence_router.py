@@ -4,9 +4,8 @@ from dataclasses import dataclass
 
 try:
     import torch
-    import torch.nn.functional as F
     from torch import Tensor, nn
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     torch = None
     Tensor = object
     nn = None
@@ -50,18 +49,16 @@ if nn is not None:
             graph_token: Tensor,
             question_token: Tensor,
             node_mask: Tensor | None = None,
-            *,
-            enabled: bool = True,
         ) -> EvidenceRouterOutput:
             scores = self.head(stroke_tokens, question_token)
             weights = self._normalized_gate(scores.evidence_logits, node_mask)
-            # A decisive action is a subset of the supporting evidence. The
-            # log-probability gate keeps the two heads semantically consistent
-            # instead of allowing a key action outside the evidence chain.
-            conditioned_key_logits = scores.key_action_logits + F.logsigmoid(scores.evidence_logits)
+            # logit(sigmoid(key) * sigmoid(evidence)): key probability cannot
+            # exceed evidence probability, even with a very large key logit.
+            key, evidence = scores.key_action_logits, scores.evidence_logits
+            conditioned_key_logits = key + evidence - torch.logsumexp(
+                torch.stack([torch.zeros_like(key), key, evidence]), dim=0
+            )
             evidence_context = torch.bmm(weights.unsqueeze(1), stroke_tokens).squeeze(1)
-            if not enabled:
-                return EvidenceRouterOutput(scores.evidence_logits, conditioned_key_logits, graph_token, weights)
             joint = torch.cat([graph_token, evidence_context, question_token], dim=-1)
             gate = self.route_gate(joint)
             routed = self.out(torch.cat([gate * graph_token, (1.0 - gate) * evidence_context, question_token], dim=-1))

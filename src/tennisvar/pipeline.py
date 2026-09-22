@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
 from tennisvar.event_parsing.graph import build_predicted_graph
-from tennisvar.generation.manifest import MANIFEST_NAME, file_sha256
+from tennisvar.features.ball_trajectory import load_track_payload
 from tennisvar.media import materialize_video
 from tennisvar.video import local_indices, uniform_indices
 
 OUTPUT_SCHEMA = "tennisvar.answer.v1"
-
-
-def _config_hash(value: dict[str, Any]) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
 class TennisVAR:
@@ -29,37 +23,25 @@ class TennisVAR:
         qwen_adapter: Path | None = None,
         device: str | None = None,
     ) -> None:
-        from tennisvar.event_parsing.runtime import build_event_predictor
+        from tennisvar.event_parsing.runtime import EventPredictor
         from tennisvar.generation.qwen import QwenVideoBackend
         from tennisvar.tactical_reasoning.runtime import TGTRCheckpointSelector
 
-        self.event = build_event_predictor(
+        if not Path(event_checkpoint).is_dir():
+            raise ValueError("event checkpoint must be a region expert directory")
+        self.event = EventPredictor(
             event_checkpoint,
             dinov3_repo=dinov3_repo,
             dinov3_weights=dinov3_weights,
             device=device,
         )
         self.selector = TGTRCheckpointSelector(tgtr_checkpoint, device=device, event_backend=self.event.backend)
-        if self.event.backend == "f3ed":
-            if self.selector.state.get("upstream_event_checkpoint_sha256") != file_sha256(Path(event_checkpoint)):
-                raise ValueError("TGTR checkpoint was trained from a different F3ED checkpoint")
-            if self.selector.state.get("upstream_event_data_fingerprint") != self.event.checkpoint.get("data_fingerprint"):
-                raise ValueError("TGTR/F3ED data fingerprints do not match")
         self.qwen = QwenVideoBackend(qwen_model, adapter=qwen_adapter)
         self.paths = {
             "event_checkpoint": str(Path(event_checkpoint)),
             "tgtr_checkpoint": str(Path(tgtr_checkpoint)),
             "qwen_model": str(Path(qwen_model)),
             "qwen_adapter": str(Path(qwen_adapter)) if qwen_adapter else None,
-        }
-        qwen_config = Path(qwen_model) / "config.json"
-        self.artifact_hashes = {
-            "event_checkpoint_sha256": file_sha256(Path(event_checkpoint)) if Path(event_checkpoint).is_file() else None,
-            "tgtr_checkpoint_sha256": file_sha256(Path(tgtr_checkpoint)),
-            "qwen_model_config_sha256": file_sha256(qwen_config),
-            "qwen_adapter_manifest_sha256": (
-                file_sha256(Path(qwen_adapter) / MANIFEST_NAME) if qwen_adapter else None
-            ),
         }
 
     def predict(
@@ -75,13 +57,11 @@ class TennisVAR:
         if not str(question).strip():
             raise ValueError("question must be non-empty")
         with materialize_video(video, fps=fps) as media:
-            if isinstance(ball_track, (str, Path)):
-                from tennisvar.event_parsing.region_features import load_track_payload
-
+            if isinstance(ball_track, str | Path):
                 ball_track = load_track_payload(Path(ball_track))
             runtime = self.event.predict(media.frame_paths, fps=media.fps, ball_track=ball_track)
             events = runtime.events
-            graph_source = "f3ed_predicted"
+            graph_source = "region_fusion_predicted"
             rally_id = Path(video).stem if Path(video).is_file() else Path(video).name
             graph = build_predicted_graph(
                 events,
@@ -105,11 +85,7 @@ class TennisVAR:
             answer = self.qwen.generate(selected_frames, question, candidates)
             by_id = {int(item["shot_id"]): item for item in candidates}
             evidence = []
-            selected_candidates = [item for item in candidates if item.get("selected")]
-            if not selected_candidates:
-                selected_candidates = candidates[:1]
-            for candidate in selected_candidates:
-                shot_id = candidate["shot_id"]
+            for shot_id in answer.get("evidence_shot_ids", []):
                 candidate = by_id.get(int(shot_id))
                 if not candidate:
                     continue
@@ -123,19 +99,15 @@ class TennisVAR:
                 )
             degraded = bool(answer.get("parse_error"))
             evidence_shot_ids = [int(item["shot_id"]) for item in evidence]
-            key_action_shot_ids = [
-                int(item["shot_id"])
-                for item in evidence
-                if item.get("key_action_confidence", 0.0) >= 0.5
-            ]
+            key_action_shot_ids = [int(sid) for sid in answer.get("key_action_shot_ids", []) if int(sid) in evidence_shot_ids]
             return {
                 "schema_version": OUTPUT_SCHEMA,
                 "question": question,
                 "answer": str(answer.get("answer") or ""),
                 "answer_type": answer.get("answer_type", "free_form"),
-                "level_1": self.selector.last_predictions.get("level_1"),
-                "level_2": self.selector.last_predictions.get("level_2"),
-                "level_3": self.selector.last_predictions.get("level_3"),
+                "level_1": answer.get("level_1"),
+                "level_2": answer.get("level_2"),
+                "level_3": answer.get("level_3"),
                 "evidence_shot_ids": evidence_shot_ids,
                 "key_action_shot_ids": key_action_shot_ids,
                 "evidence_frames": [int(item["frame"]) for item in evidence],
@@ -151,17 +123,12 @@ class TennisVAR:
                     "graph_source": graph_source,
                     "event_feature_backend": runtime.feature_provenance.backend,
                     "event_detector_backend": self.event.backend,
-                    "event_feature_weights_sha256": runtime.feature_provenance.weights_sha256,
-                    "tracknet_checkpoint_sha256": runtime.feature_provenance.tracknet_checkpoint_sha256,
                     "tracknet_source": runtime.feature_provenance.tracknet_source,
-                    "event_checkpoint_data_fingerprint": runtime.checkpoint_provenance.get("data_fingerprint"),
-                    "event_checkpoint_sha256": runtime.checkpoint_provenance.get("checkpoint_sha256"),
                     "evidence_selector": self.selector.name,
+                    "tgtr_predictions": self.selector.last_predictions,
                     "qwen_adapter_track": (
                         self.qwen.adapter_manifest.get("track") if self.qwen.adapter_manifest else None
                     ),
                     **self.paths,
-                    **self.artifact_hashes,
-                    "config_hash": _config_hash(self.paths),
                 },
             }

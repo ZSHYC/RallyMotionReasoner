@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 from PIL import Image
+
+from tennisvar.features.ball_trajectory import trajectory_rows
 
 VISUAL_DIM = 768
 MOTION_DIM = 24
@@ -18,30 +20,35 @@ EVENT_FEATURE_DIM = VISUAL_DIM + MOTION_DIM + BALL_FRAME_DIM
 class FeatureProvenance:
     backend: str
     weights: str
-    weights_sha256: str | None
     feature_dim: int
     frame_count: int
     ball_status: str
-    tracknet_checkpoint_sha256: str | None = None
     tracknet_source: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def _sha256(path: Path) -> str:
-    import hashlib
-
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _gray(path: Path, size: int = 64) -> np.ndarray:
-    with Image.open(path) as image:
-        return np.asarray(image.convert("L").resize((size, size), Image.BILINEAR), dtype=np.float32) / 255.0
+def shot_feature_payload(
+    graph: dict[str, Any], frame_indices: list[int], frame_features: Any, *, split: str
+) -> dict[str, Any]:
+    """Select hit-node features for both exported datasets and live TGTR input."""
+    if frame_features.ndim != 2 or len(frame_features) != len(frame_indices):
+        raise ValueError("frame features and frame indices must align")
+    strokes = graph.get("strokes") or []
+    by_frame = {frame: index for index, frame in enumerate(frame_indices)}
+    indices = [by_frame[int(shot["frame"])] for shot in strokes]
+    selected = frame_features[indices].float().cpu()
+    return {
+        "schema": "tennisvar.tgtr_event_features.v2",
+        "source": "region_fusion_predicted",
+        "rally_id": graph["rally_id"],
+        "split": split,
+        "shot_ids": [int(shot["shot_id"]) for shot in strokes],
+        "shot_frames": [int(shot["frame"]) for shot in strokes],
+        "shot_features": selected,
+        "motion_stats": selected[:, VISUAL_DIM : VISUAL_DIM + MOTION_DIM],
+    }
 
 
 def motion_features_from_gray(gray: Any) -> Any:
@@ -77,15 +84,6 @@ def motion_features_from_gray(gray: Any) -> Any:
         [stats((gray - previous).abs()), stats((following - gray).abs()), stats((following - previous).abs())],
         dim=1,
     )
-
-
-def motion_features(paths: list[Path]) -> np.ndarray:
-    if not paths:
-        return np.zeros((0, MOTION_DIM), dtype=np.float32)
-    import torch
-
-    gray = torch.from_numpy(np.stack([_gray(path) for path in paths], axis=0))
-    return motion_features_from_gray(gray).cpu().numpy().astype(np.float32, copy=False)
 
 
 def ball_frame_features(frame_indices: list[int], track: dict[str, Any] | None) -> tuple[np.ndarray, str]:
@@ -132,7 +130,7 @@ def ball_frame_features(frame_indices: list[int], track: dict[str, Any] | None) 
     return output, "READY" if visible_count else "EMPTY_OR_INVISIBLE"
 
 
-class DinoMotionFeatureExtractor:
+class FrameFeatureExtractor:
     """Frozen DINOv3 frame features plus explicit motion and optional TrackNet features."""
 
     def __init__(
@@ -143,7 +141,6 @@ class DinoMotionFeatureExtractor:
         device: str | None = None,
         batch_size: int = 32,
         image_size: int = 224,
-        require_ball: bool = False,
     ) -> None:
         try:
             import torch
@@ -158,13 +155,12 @@ class DinoMotionFeatureExtractor:
         from dinov3.hub.backbones import dinov3_vitb16
 
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        # Hash the immutable weight file once. Re-hashing a ~340 MB checkpoint
-        # for every rally would add terabytes of avoidable I/O on the full set.
-        self.weights_sha256 = _sha256(self.weights)
         self.encoder = dinov3_vitb16(pretrained=True, weights=str(self.weights)).to(self.device).eval()
         for parameter in self.encoder.parameters():
             parameter.requires_grad_(False)
-        self.batch_size, self.image_size, self.require_ball = int(batch_size), int(image_size), bool(require_ball)
+        self.batch_size, self.image_size = int(batch_size), int(image_size)
+        if self.batch_size <= 0 or self.image_size <= 0:
+            raise ValueError("DINO batch size and image size must be positive")
         self.mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
         self.std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
         self.mean_device = self.mean.to(self.device)
@@ -186,7 +182,7 @@ class DinoMotionFeatureExtractor:
     ) -> tuple[Any, FeatureProvenance]:
         if not paths:
             raise ValueError("cannot extract event features from an empty frame sequence")
-        indices = frame_indices or list(range(len(paths)))
+        indices = list(range(len(paths))) if frame_indices is None else frame_indices
         if len(indices) != len(paths):
             raise ValueError("frame_indices and paths length mismatch")
         import torch.nn.functional as functional
@@ -217,15 +213,99 @@ class DinoMotionFeatureExtractor:
             raise RuntimeError(f"unexpected DINOv3 output dimension: {visual_tensor.shape[-1]} != {VISUAL_DIM}")
         motion = motion_features_from_gray(self.torch.cat(gray_frames, dim=0)).detach().float().cpu()
         ball, ball_status = ball_frame_features(indices, ball_track)
-        if self.require_ball and ball_status != "READY":
-            raise RuntimeError(f"TrackNet features are required but unavailable: {ball_status}")
         features = self.torch.cat([visual_tensor, motion, self.torch.from_numpy(ball)], dim=-1)
         provenance = FeatureProvenance(
             backend="dinov3_vitb16_lvd1689m+motion24+tracknet8",
             weights=str(self.weights),
-            weights_sha256=self.weights_sha256,
             feature_dim=int(features.shape[-1]),
             frame_count=len(paths),
             ball_status=ball_status,
+            tracknet_source=(ball_track or {}).get("source"),
         )
         return features, provenance
+
+
+def _tile_arrays(array: np.ndarray) -> list[np.ndarray]:
+    height, width = array.shape[:2]
+    h, w = (55 * height + 99) // 100, (55 * width + 99) // 100
+    return [array[:h, :w], array[:h, width - w:], array[height - h:, :w], array[height - h:, width - w:]]
+
+
+class RegionFeatureExtractor:
+    """Reuse TennisVAR's DINO provenance while adding four raw-image regions."""
+
+    def __init__(self, repo: Path, weights: Path, *, device: str, batch_size: int = 32) -> None:
+        import torch
+
+        self.torch = torch
+        self.batch_size = int(batch_size)
+        if self.batch_size <= 0:
+            raise ValueError("region DINO batch size must be positive")
+        self.base = FrameFeatureExtractor(repo, weights, device=device, batch_size=self.batch_size)
+
+    def _image_tensor(self, array: np.ndarray) -> Any:
+        import torch.nn.functional as functional
+
+        tensor = self.torch.from_numpy(np.ascontiguousarray(array)).permute(2, 0, 1).float() / 255.0
+        tensor = functional.interpolate(
+            tensor.unsqueeze(0), size=(256, 256), mode="bilinear", align_corners=False, antialias=True
+        )[0]
+        mean = tensor.new_tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        std = tensor.new_tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+        return (tensor - mean) / std
+
+    def _encode(self, batch: Any) -> Any:
+        encoded = self.base.encoder(batch)
+        if isinstance(encoded, dict):
+            raw_output = encoded
+            encoded = raw_output.get("x_norm_clstoken")
+            if encoded is None:
+                encoded = raw_output.get("last_hidden_state")
+            if encoded is None:
+                raise RuntimeError("DINOv3 encoder returned no CLS feature")
+        if encoded.ndim == 3:
+            encoded = encoded[:, 0]
+        return encoded
+
+    def _region_features(self, paths: list[Path]) -> Any:
+        values: list[Any] = []
+        with self.torch.no_grad():
+            for start in range(0, len(paths), self.batch_size):
+                batch_arrays: list[np.ndarray] = []
+                for path in paths[start : start + self.batch_size]:
+                    with Image.open(path) as image:
+                        batch_arrays.append(np.asarray(image.convert("RGB")))
+                views = [self._image_tensor(array) for array in batch_arrays]
+                views.extend(self._image_tensor(tile) for array in batch_arrays for tile in _tile_arrays(array))
+                batch = self.torch.stack(views).to(self.base.device)
+                encoded = self._encode(batch).detach().float().cpu()
+                if encoded.ndim != 2 or encoded.shape[-1] != 768 or not self.torch.isfinite(encoded).all():
+                    raise RuntimeError("region DINO encoder must return finite [N,768] features")
+                full = encoded[: len(batch_arrays)]
+                tiles = encoded[len(batch_arrays) :].reshape(len(batch_arrays), 4, 768)
+                values.append(self.torch.cat((full.unsqueeze(1), tiles), dim=1))
+        return self.torch.cat(values, dim=0).reshape(len(paths), 3840).to(dtype=self.torch.float16)
+
+    def extract(
+        self,
+        paths: list[Path],
+        *,
+        frame_indices: list[int],
+        fps: float,
+        ball_track: dict[str, Any] | None,
+    ) -> tuple[Any, Any, FeatureProvenance]:
+        if len(paths) != len(frame_indices) or not paths:
+            raise ValueError("region paths and frame_indices must be non-empty and aligned")
+        if ball_track is None:
+            raise ValueError("region event detection requires a trajectory payload")
+        base_features, provenance = self.base.extract(paths, frame_indices=frame_indices, ball_track=ball_track)
+        visual_features = self._region_features(paths)
+        trajectory = trajectory_rows(
+            ball_track,
+            frame_indices,
+            fps=fps,
+            width=int((ball_track or {}).get("width") or (ball_track or {}).get("image_width") or 1),
+            height=int((ball_track or {}).get("height") or (ball_track or {}).get("image_height") or 1),
+        )
+        provenance = replace(provenance, backend=f"{provenance.backend}+region4")
+        return base_features, (trajectory, visual_features), provenance

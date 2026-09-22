@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover
 if nn is not None:
 
     class StrokeEventTokenizer(nn.Module):
-        """Fuse semantic attributes, EPM visual cues, and normalized contact time."""
+        """Fuse semantic attributes, event visual cues, and normalized contact time."""
 
         def __init__(self, hidden_dim: int, dropout: float = 0.1) -> None:
             super().__init__()

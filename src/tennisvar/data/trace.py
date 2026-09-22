@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import Counter
 from collections.abc import Iterable
@@ -14,19 +13,6 @@ from tennisvar.video import list_images
 
 DATASET_NAME = "trace"
 SPLITS = ("train", "val", "test")
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def stable_qa_id(split: str, video: str, qa_group: str, question: str) -> str:
-    raw = "\0".join([split, video, qa_group, question]).encode("utf-8")
-    return f"{split}:{video}:{hashlib.sha1(raw).hexdigest()[:12]}"
 
 
 def _ints(values: Any) -> list[int]:
@@ -96,7 +82,9 @@ def _causal_strength(result: Any) -> str:
     return "insufficient"
 
 
-def build_reference(row: dict[str, Any], split: str, qa: dict[str, Any], graph: dict[str, Any]) -> dict[str, Any]:
+def build_reference(
+    row: dict[str, Any], split: str, qa: dict[str, Any], graph: dict[str, Any], *, qa_index: int
+) -> dict[str, Any]:
     video = str(row["video"])
     evidence, key, explanation = reasoning_evidence(qa)
     unit = _choose_tactical_unit(row, evidence, key)
@@ -123,7 +111,7 @@ def build_reference(row: dict[str, Any], split: str, qa: dict[str, Any], graph: 
         "schema_version": "tennisvar.qa.v3",
         "dataset": DATASET_NAME,
         "split": split,
-        "qa_id": stable_qa_id(split, video, qa_group, question),
+        "qa_id": f"{split}:{video}:{qa_index}",
         "rally_id": video,
         "match_id": match_id_from_clip(video),
         "qa_group": qa_group,
@@ -134,9 +122,6 @@ def build_reference(row: dict[str, Any], split: str, qa: dict[str, Any], graph: 
         # gold_answer so they can never enter a Qwen assistant target.
         "key_action_frames": [frame_by_shot[item] for item in key if item in frame_by_shot],
         "gold_shot_frames": {str(shot_id): frame for shot_id, frame in sorted(frame_by_shot.items())},
-        "source_row_sha256": hashlib.sha256(
-            json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest(),
     }
 
 
@@ -193,7 +178,6 @@ def prepare_dataset(
     strict_media: bool = True,
 ) -> dict[str, Any]:
     source_root, output_root, frame_root = Path(source_root), Path(output_root), Path(frame_root)
-    source_hashes: dict[str, str] = {}
     split_videos: dict[str, set[str]] = {}
     all_issues: list[str] = []
     split_reports: dict[str, Any] = {}
@@ -204,7 +188,6 @@ def prepare_dataset(
         if not source.is_file():
             raise FileNotFoundError(source)
         rows = load_source(source)
-        source_hashes[split] = sha256_file(source)
         split_videos[split] = {str(row.get("video")) for row in rows}
         graphs: list[dict[str, Any]] = []
         refs: list[dict[str, Any]] = []
@@ -233,8 +216,8 @@ def prepare_dataset(
             graph = build_graph(normalized, split)
             all_issues.extend(f"{split}/{video}: {error}" for error in validate_graph(graph))
             graphs.append(graph)
-            for qa in row.get("qa_units") or []:
-                ref = build_reference(row, split, qa, graph)
+            for qa_index, qa in enumerate(row.get("qa_units") or [], start=1):
+                ref = build_reference(row, split, qa, graph, qa_index=qa_index)
                 refs.append(ref)
                 qa_groups[ref["qa_group"]] += 1
         write_jsonl(output_root / "graphs" / f"sgtr_graph_{DATASET_NAME}_{split}.jsonl", graphs)
@@ -244,7 +227,6 @@ def prepare_dataset(
         mismatched = [item for item in media if item["frame_count"] != item["expected_num_frames"]]
         split_reports[split] = {
             "source": str(source),
-            "source_sha256": source_hashes[split],
             "rows": len(rows),
             "qa_rows": len(refs),
             "events": sum(len(row.get("events") or []) for row in rows),
@@ -261,7 +243,6 @@ def prepare_dataset(
         "status": "PASS",
         "dataset": DATASET_NAME,
         "schema_version": "tennisvar.dataset.v1",
-        "source_hashes": source_hashes,
         "splits": split_reports,
         "qa_groups": dict(sorted(qa_groups.items())),
         "video_overlap": {key: len(value) for key, value in overlaps.items()},

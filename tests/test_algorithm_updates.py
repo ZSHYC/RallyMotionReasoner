@@ -8,8 +8,8 @@ from tennisvar.evaluation.event_metrics import one_to_one_match
 from tennisvar.event_parsing.decoder import DecodedEvent
 from tennisvar.event_parsing.features import ball_frame_features
 from tennisvar.event_parsing.graph import build_predicted_graph
-from tennisvar.event_parsing.region_features import _trajectory_rows, normalize_trajectory
-from tennisvar.event_parsing.region_model import RegionFusionEventModel
+from tennisvar.event_parsing.model import RegionFusionEventModel
+from tennisvar.features.ball_trajectory import normalize_trajectory, trajectory_rows
 from tennisvar.tactical_reasoning.model import TacticalGraphGuidedTemporalReasoner
 from tennisvar.training.eval import prf
 from tennisvar.training.losses import compute_loss
@@ -121,7 +121,7 @@ def test_tgtr_auxiliary_loss_and_multilabel_key_metric_are_finite() -> None:
 
 
 def test_region_motion_contract_and_bounce_graph_cue() -> None:
-    rows = _trajectory_rows(
+    rows = trajectory_rows(
         {"width": 100, "height": 50, "points": [
             {"frame": 0, "ball_x": 10, "ball_y": 20, "visible": True},
             {"frame": 1, "ball_x": 20, "ball_y": 20, "visible": True},

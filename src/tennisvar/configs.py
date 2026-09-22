@@ -29,14 +29,16 @@ def validate_paper_config(config: dict[str, Any]) -> None:
     features = config.get("feature_extraction", {})
     flags = config.get("module_flags", {})
     errors = []
-    if str(data.get("graph_source")) != "f3ed":
-        errors.append("data.graph_source must be f3ed (predicted events)")
+    if str(data.get("graph_source")) != "region_fusion":
+        errors.append("data.graph_source must be region_fusion (predicted events)")
     if bool(data.get("include_label_tokens", True)):
         errors.append("data.include_label_tokens must be false")
     if not bool(data.get("use_edges", False)):
         errors.append("data.use_edges must be true")
     if int(features.get("feature_dim", 0)) != PAPER_FEATURE_DIM:
         errors.append(f"feature_extraction.feature_dim must be {PAPER_FEATURE_DIM}")
+    if int(features.get("motion_feature_dim", 0)) not in {0, 24}:
+        errors.append("feature_extraction.motion_feature_dim must be 0 or 24 for the event feature export")
     if str(flags.get("reasoner")) != "relation_temporal_graph_chain":
         errors.append("module_flags.reasoner must be relation_temporal_graph_chain")
     if str(flags.get("vlm_adapter")) != "structured_prompt":

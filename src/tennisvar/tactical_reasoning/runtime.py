@@ -6,31 +6,9 @@ from typing import Any
 
 from tennisvar.checkpoint_validation import validate_tgtr_checkpoint
 from tennisvar.data import GraphQADataset, collate, move_batch
-from tennisvar.event_parsing.dataset import safe_name
+from tennisvar.data.graph_qa import safe_feature_name
+from tennisvar.event_parsing.features import shot_feature_payload
 from tennisvar.tactical_reasoning.model import TacticalGraphGuidedTemporalReasoner
-
-
-def runtime_feature_payload(
-    *,
-    rally_id: str,
-    shot_ids: list[int],
-    shot_frames: list[int],
-    shot_features: Any,
-    event_checkpoint_data_fingerprint: str,
-    event_checkpoint_sha256: str,
-) -> dict[str, Any]:
-    """Build the same strict TGTR feature contract used by split export."""
-    return {
-        "schema": "tennisvar.tgtr_event_features.v2",
-        "source": "f3ed_predicted",
-        "rally_id": rally_id,
-        "split": "inference",
-        "shot_ids": shot_ids,
-        "shot_frames": shot_frames,
-        "shot_features": shot_features,
-        "event_checkpoint_data_fingerprint": event_checkpoint_data_fingerprint,
-        "event_checkpoint_sha256": event_checkpoint_sha256,
-    }
 
 
 class TGTRCheckpointSelector:
@@ -42,7 +20,7 @@ class TGTRCheckpointSelector:
         *,
         device: str | None = None,
         top_k: int = 8,
-        event_backend: str = "f3ed",
+        event_backend: str = "region_fusion",
     ) -> None:
         import torch
 
@@ -51,26 +29,16 @@ class TGTRCheckpointSelector:
         self.state = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
         validate_tgtr_checkpoint(
             self.state,
-            expected_graph_source="f3ed",
+            expected_graph_source="region_fusion",
             expected_event_backend=event_backend,
         )
         cfg = self.state.get("config") or {}
-        if str(self.state.get("graph_source") or cfg.get("data", {}).get("graph_source")) != "f3ed":
-            raise ValueError("TGTR selector requires a checkpoint trained on predicted F3ED graphs")
         self.event_backend = str(event_backend)
-        checkpoint_backend = str(
-            self.state.get("event_backend")
-            or (self.state.get("run_manifest") or {}).get("event_backend")
-            or cfg.get("data", {}).get("event_backend")
-            or "f3ed"
-        )
-        if self.event_backend == "region_fusion" and checkpoint_backend != self.event_backend:
-            raise ValueError("region event detection requires a TGTR checkpoint trained with event_backend=region_fusion")
         if bool(cfg.get("data", {}).get("include_label_tokens", True)):
             raise ValueError("TGTR main selector refuses checkpoints that consume event label text")
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.top_k = int(top_k)
-        self.evidence_threshold = 0.35
+        self.evidence_threshold = float(self.state["thresholds"]["evidence_threshold"])
         self.last_predictions: dict[str, str | None] = {}
         model_cfg = self.state.get("config", {}).get("feature_extraction", {})
         self.motion_feature_dim = int(self.state.get("motion_feature_dim", model_cfg.get("motion_feature_dim", 0)))
@@ -100,28 +68,14 @@ class TGTRCheckpointSelector:
         expected_dim = int(self.state["visual_feature_dim"])
         if int(frame_features.shape[-1]) != expected_dim:
             raise ValueError(f"TGTR/event feature dimension mismatch: {frame_features.shape[-1]} != {expected_dim}")
-        selected = []
-        for stroke in strokes:
-            frame = int(stroke["frame"])
-            index = min(range(len(frame_indices)), key=lambda item: abs(frame_indices[item] - frame))
-            selected.append(frame_features[index])
         rally_id = str(graph["rally_id"])
         cfg = self.state.get("config") or {}
         with tempfile.TemporaryDirectory(prefix="tennisvar_tgtr_") as temp:
             root = Path(temp)
-            target = root / "inference" / f"{safe_name(rally_id)}.pt"
+            target = root / "inference" / f"{safe_feature_name(rally_id)}.pt"
             target.parent.mkdir(parents=True)
             self.torch.save(
-                runtime_feature_payload(
-                    rally_id=rally_id,
-                    shot_ids=[int(stroke["shot_id"]) for stroke in strokes],
-                    shot_frames=[int(stroke["frame"]) for stroke in strokes],
-                    shot_features=self.torch.stack(selected),
-                    event_checkpoint_data_fingerprint=str(
-                        self.state["upstream_event_data_fingerprint"]
-                    ),
-                    event_checkpoint_sha256=str(self.state["upstream_event_checkpoint_sha256"]),
-                ),
+                shot_feature_payload(graph, frame_indices, frame_features, split="inference"),
                 target,
             )
             row = {
@@ -144,6 +98,9 @@ class TGTRCheckpointSelector:
                 include_label_tokens=False,
                 use_edges=bool(cfg.get("data", {}).get("use_edges", True)),
                 require_visual_features=True,
+                max_strokes=len(strokes),
+                max_question_tokens=int(cfg.get("data", {}).get("max_question_tokens", 64)),
+                max_node_tokens=int(cfg.get("data", {}).get("max_node_tokens", 24)),
             )
             if len(dataset) != 1:
                 raise RuntimeError("TGTR could not encode the predicted event graph")

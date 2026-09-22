@@ -1,7 +1,6 @@
 """Dataset APIs with lazy torch imports so CPU-only data validation remains usable."""
 
 _CORE_EXPORTS = {
-    "TraceGraphDataset",
     "GraphQADataset",
     "EncodedItem",
     "build_label_maps",

@@ -7,7 +7,7 @@ model structure only; no training run or numerical reproduction is claimed.
 ## Current pipeline
 
 ```text
-EPM event features
+Region motion event features
   -> structured stroke state (ball/contact masks and normalized times)
   -> semantic + visual stroke tokenizer
   -> local multiscale temporal mixer (depthwise 3/5-frame paths)
@@ -22,10 +22,9 @@ relations are used rather than inventing speculative edge types.
 
 ## Region event detector
 
-The event detector accepts the `tennis-region-infer` expert directory as the
-primary EPM artifact. A directory containing `trajectory_expert.pt` and
-`visual_expert.pt` selects this detector directly; the legacy EPM file remains
-readable for old experiments.
+The event detector accepts the `tennis-region-infer` expert directory as its
+only event artifact. A directory containing `trajectory_expert.pt` and
+`visual_expert.pt` selects the trajectory and five-view region experts directly.
 
 The trajectory branch represents each frame with normalized position,
 visibility, velocity, acceleration, turning, curvature, validity, and the
@@ -46,10 +45,9 @@ encoded as structural stroke tokens. TGTR can use bounce timing as context
 without adding bounce nodes or changing player-relation semantics.
 
 `RegionFusionEventModel` adds bidirectional motion-to-region and
-region-to-motion cross-attention plus the existing attribute heads. It is the
-trainable upgrade for future region-based EPM training; published expert
-weights use their exact independent heads and do not silently use untrained
-fusion parameters.
+region-to-motion cross-attention plus the attribute heads. It is the joint
+training structure; the runtime expert directory preserves the published
+independent expert weights and fuses their event probabilities at inference.
 
 The integration is based on
 [`tennis-region-infer`](https://github.com/ZSHYC/tennis-region-infer),
@@ -67,9 +65,9 @@ The tokenizer now receives the six available structured values for each stroke:
 `ball_x`, `ball_y`, `ball_visible`, `ball_mask`, `contact_frame`, and
 `contact_mask`.
 
-They are projected once and fused with the existing 800-dimensional EPM event
+They are projected once and fused with the existing 800-dimensional event
 feature. Optional cached motion statistics remain supported through the existing
-`motion_token_mode`/`motion_feature_dim` settings. Missing values are represented
+`motion_feature_dim` setting (0 or 24). Missing values are represented
 by their masks and zero-filled coordinates, so the model does not confuse an
 unobserved ball with an observed coordinate at the origin.
 
@@ -128,7 +126,7 @@ objective matches the target representation.
 ## What the preceding update fixed
 
 The previous update introduced optimal one-to-one temporal matching, explicit
-null/invisible-ball handling, frame-rate-aware deltas, EPM masking and
+null/invisible-ball handling, frame-rate-aware deltas, event masking and
 sinusoidal token positions, CJK tokenization, removal of train-only QA metadata,
 evidence/key subset constraints, unknown-hitter graph handling, degree-normalized
 messages, padding-safe TGTR tokens, and structured pipeline fields. These are
@@ -165,11 +163,37 @@ repository reproduces their datasets, checkpoints, or reported metrics.
 TGTR changes parameter shapes in the graph and stroke encoders. A TGTR
 checkpoint used with the region detector must declare
 `event_backend=region_fusion` and be trained from graphs generated with the
-same hit-node/bounce-cue contract. Existing F3ED TGTR checkpoints remain
-reserved for the legacy file backend. No migration layer or numerical result
-is claimed; lightweight checks only validate tensor contracts and graph
-semantics.
+same hit-node/bounce-cue contract. No migration layer or numerical result is
+claimed; lightweight checks only validate tensor contracts and graph semantics.
 
-The training entry point accepts `data.event_backend=region_fusion` when its
-event export reports carry the same backend. It records the detector contract
-in the TGTR checkpoint without adding a second configuration framework.
+The training entry point records `event_backend=region_fusion` and reads the
+actual exported hit features. Training does not require test-split artifacts.
+
+## Module replacement and cleanup
+
+`event_parsing/model.py`, `features.py`, and `runtime.py` now contain the region
+experts, feature extraction, and sole event predictor. Trajectory CSV/JSON input
+and normalization live in `features/ball_trajectory.py`. The superseded event
+model, trainer, cache decoder, and compatibility aliases have been removed.
+The 800-D frame descriptor remains because TGTR consumes it; it is not an old
+event detector. `export-events` uses the current predictor and exports hit-only
+features through the same payload builder as live TGTR inference.
+
+The joint cross-attention model and attribute heads remain available as model
+structure. Published independent expert checkpoints do not contain those
+parameters: their runtime returns unknown attributes rather than invented
+predictions, so same-player edges require a predicted hitter. Cross-attention
+masks exclude padded slots, including an entirely missing stream. The trajectory
+`valid` channel marks real temporal slots; `detected` separately marks visibility.
+
+Artifact digest computation and fingerprint metadata have been removed throughout
+data preparation, event features, checkpoints, and generation. QA identifiers use
+split, rally, and question index. Resume compares configuration and label/vocabulary
+maps directly. Structural dimensions, required files, and schema checks remain.
+
+This pass also fixes the stored TGTR threshold being ignored, candidate indexing
+for rallies exceeding 32 hits, CPU best-weight snapshots sharing mutable storage,
+and distributed sample padding when there are fewer samples than ranks. Key-action
+probability is now the product of its conditional probability and evidence
+probability. Final answer evidence follows the generator's validated candidate IDs;
+TGTR predictions remain separately available in provenance.

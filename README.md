@@ -68,7 +68,7 @@ Given a rally and a tactical question, TennisVAR traces the relevant stroke sequ
 
 TennisVAR combines three core components:
 
-1. **Event Parsing Module (EPM)** converts a continuous rally into explicit stroke events.
+1. **Region Motion Event Detector** converts a continuous rally into explicit hit and bounce events.
 2. **Tactical Graph-Guided Temporal Reasoner (TGTR)** models temporal and same-player relations.
 3. **Qwen3-VL Generator** turns routed visual evidence and predicted events into a grounded tactical answer.
 
@@ -103,7 +103,7 @@ Update `configs/paths.local.yaml` with your local DINOv3, Qwen3-VL, data, and ar
 
 ### Inference
 
-The inference interface is ready. Pretrained EPM, TGTR, and LoRA checkpoints are being prepared for release.
+The inference interface is ready. Region expert, TGTR, and LoRA checkpoints are separate research artifacts.
 
 ```bash
 tennisvar predict \
@@ -117,8 +117,8 @@ tennisvar predict \
 ```
 
 The event checkpoint accepts a `tennis-region-infer` expert directory containing
-`trajectory_expert.pt` and `visual_expert.pt`; the legacy EPM file remains
-available for old artifacts. TGTR and Qwen3-VL training are separate stages.
+`trajectory_expert.pt` and `visual_expert.pt`. The directory is the only event
+detector backend; TGTR and Qwen3-VL training remain separate stages.
 
 ```bash
 PYTHONPATH=src python scripts/train_tgtr.py \
@@ -132,24 +132,27 @@ PYTHONPATH=src torchrun --nproc-per-node=8 scripts/train_qwen_lora.py \
   --report outputs/qwen_lora.json
 ```
 
-</details>
+`tennisvar export-events --checkpoint /path/to/region-experts --split train`
+exports graphs and hit features for TGTR using the configured frame and TrackNet
+roots. Repeat for validation; TrackNet files are `<root>/<split>/<rally>.json`
+or `.csv`. These commands are usage instructions, not reproduced results.
 
 ## 📦 Release Status
 
 | Component | Status |
 | --- | --- |
 | Paper and project page | ✅ Available |
-| Core EPM, TGTR and generation code | ✅ Available |
+| Region event detector, TGTR and generation code | ✅ Available |
 | TRACE annotations and split metadata | 🔍 Release plan under review |
 | Tennis broadcast videos | ⛔ Not distributed |
-| Pretrained EPM, TGTR and LoRA weights | ⏳ Coming soon |
+| Pretrained region experts, TGTR and LoRA weights | ⏳ Coming soon |
 
 ## 🗂️ Repository Layout
 
 ```text
 configs/                 Paper-aligned configuration
 scripts/                 TGTR and Qwen3-VL training entry points
-src/tennisvar/           Core EPM, TGTR and generation code
+src/tennisvar/           Region event, TGTR and generation code
 tests/                    Lightweight unit tests
 docs/                     Project website and visual assets
 ```

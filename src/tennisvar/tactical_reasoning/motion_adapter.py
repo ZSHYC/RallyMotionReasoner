@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover
 if nn is not None:
 
     class TennisMotionAdapter(nn.Module):
-        """Project fused 800-D EPM features into contextual 256-D stroke cues."""
+        """Project fused 800-D event features into contextual 256-D stroke cues."""
 
         def __init__(self, input_dim: int = 800, hidden_dim: int = 256, num_heads: int = 4, dropout: float = 0.1) -> None:
             super().__init__()

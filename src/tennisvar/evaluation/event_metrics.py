@@ -4,8 +4,8 @@ import random
 from collections import defaultdict
 from typing import Any
 
-from tennisvar.event_parsing.labels import ATTRIBUTE_FIELDS
 from tennisvar.evaluation.matching import optimal_temporal_matching
+from tennisvar.event_parsing.labels import ATTRIBUTE_FIELDS
 
 
 def one_to_one_match(predicted: list[int], gold: list[int], tolerance: int) -> list[tuple[int, int]]:
@@ -127,7 +127,7 @@ def evaluate_event_records(
     bootstrap_samples: int = 0,
     bootstrap_seed: int = 42,
 ) -> dict[str, Any]:
-    """Evaluate F3ED with optional, reproducible formal-evaluation details."""
+    """Evaluate region-fusion event records with optional formal details."""
     overall = _aggregate_event_records(records, tolerances)
     report: dict[str, Any] = {"count": len(records), "overall": overall}
     if include_per_record:

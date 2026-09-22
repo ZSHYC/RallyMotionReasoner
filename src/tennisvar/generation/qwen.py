@@ -73,7 +73,7 @@ class QwenVideoBackend:
         if adapter:
             from peft import PeftModel
 
-            from tennisvar.generation.manifest import file_sha256, load_qwen_adapter_manifest
+            from tennisvar.generation.manifest import load_qwen_adapter_manifest
 
             adapter = Path(adapter)
             if not (adapter / "adapter_config.json").is_file():
@@ -81,7 +81,6 @@ class QwenVideoBackend:
             self.adapter_manifest = load_qwen_adapter_manifest(
                 adapter,
                 expected_track="tgtr_assisted_pred",
-                expected_base_model_config_sha256=file_sha256(self.model_path / "config.json"),
             )
             self.model = PeftModel.from_pretrained(self.model, str(adapter), is_trainable=False).eval()
             self.adapter = str(adapter)
@@ -124,6 +123,9 @@ class QwenVideoBackend:
             }
         for field in ("evidence_shot_ids", "key_action_shot_ids"):
             values = parsed.get(field) if isinstance(parsed.get(field), list) else []
-            parsed[field] = [int(value) for value in values if str(value).isdigit() and int(value) in allowed]
+            parsed[field] = list(dict.fromkeys(int(value) for value in values if str(value).isdigit() and int(value) in allowed))
+        parsed["key_action_shot_ids"] = [sid for sid in parsed["key_action_shot_ids"] if sid in parsed["evidence_shot_ids"]]
+        by_id = {int(item["shot_id"]): item for item in candidates}
+        parsed["evidence_frames"] = [int(by_id[sid]["frame"]) for sid in parsed["evidence_shot_ids"]]
         parsed["raw"] = raw
         return parsed

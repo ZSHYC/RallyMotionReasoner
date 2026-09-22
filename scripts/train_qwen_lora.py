@@ -16,7 +16,6 @@ from typing import Any
 from tennisvar.generation.manifest import (
     MANIFEST_NAME,
     QWEN_ADAPTER_SCHEMA,
-    file_sha256,
     load_qwen_adapter_manifest,
 )
 from tennisvar.generation.sft import prepare_qwen_sft_item, structured_video_messages
@@ -31,7 +30,7 @@ def _distributed_indices(size: int, epoch: int, seed: int, rank: int, world_size
     indices = list(range(size))
     random.Random(seed + epoch).shuffle(indices)
     total = math.ceil(size / world_size) * world_size
-    indices.extend(indices[: total - size])
+    indices = (indices * math.ceil(total / size))[:total]
     return indices[rank:total:world_size]
 
 
@@ -45,10 +44,6 @@ def _latest_checkpoint(output_dir: Path) -> Path | None:
         if (path / "adapter_config.json").is_file() and (path / "trainer_state.pt").is_file():
             candidates.append((step, path))
     return max(candidates, default=(0, None), key=lambda item: item[0])[1]
-
-
-def _valid_hash(value: Any) -> bool:
-    return isinstance(value, str) and len(value) == 64 and all(ch in "0123456789abcdef" for ch in value.lower())
 
 
 def _validate_data_report(
@@ -78,7 +73,6 @@ def _validate_data_report(
     mismatched = {key: (report.get(key), value) for key, value in expected.items() if report.get(key) != value}
     if mismatched:
         raise ValueError(f"Qwen data-report contract mismatch: {mismatched}")
-    hashes: dict[str, str] = {}
     for split, data in (("train", train_data), ("val", val_data)):
         row = (report.get("splits") or {}).get(split) or {}
         if (
@@ -90,12 +84,7 @@ def _validate_data_report(
             or Path(str(row.get("sft_path") or "")).resolve() != data.resolve()
         ):
             raise ValueError(f"Qwen data-report {split} coverage/path contract mismatch")
-        digest = file_sha256(data)
-        if row.get("sft_sha256") != digest:
-            raise ValueError(f"Qwen data-report {split} SFT hash mismatch")
-        hashes[split] = digest
-    hashes["report"] = file_sha256(report_path)
-    return hashes
+    return report
 
 
 def _validate_rows(
@@ -123,27 +112,8 @@ def _validate_rows(
             raise ValueError(f"Qwen {label} row split mismatch for {qa_id}: {metadata.get('split')} != {expected_split}")
         if metadata.get("media_mode") != "videos" or list(metadata.get("schema_fields") or []) != list(REQUIRED_SCHEMA_V2):
             raise ValueError(f"Qwen {label} row media/schema contract mismatch for {qa_id}")
-        if not _valid_hash(metadata.get("source_row_sha256")):
-            raise ValueError(f"Qwen {label} row lacks an immutable source-row hash: {qa_id}")
-        if metadata.get("graph_source") != "f3ed_predicted" or not _valid_hash(
-            metadata.get("event_checkpoint_data_fingerprint")
-        ) or not _valid_hash(metadata.get("event_checkpoint_sha256")):
+        if metadata.get("graph_source") != "region_fusion_predicted":
             raise ValueError(f"Qwen {label} row lacks predicted-event provenance: {qa_id}")
-        for field in (
-            "tgtr_checkpoint_sha256",
-            "tgtr_data_fingerprint",
-            "tgtr_config_hash",
-            "tgtr_upstream_event_checkpoint_sha256",
-            "tgtr_upstream_event_data_fingerprint",
-        ):
-            if not _valid_hash(metadata.get(field)):
-                raise ValueError(f"Qwen {label} row lacks {field}: {qa_id}")
-        if (
-            metadata["tgtr_upstream_event_checkpoint_sha256"] != metadata["event_checkpoint_sha256"]
-            or metadata["tgtr_upstream_event_data_fingerprint"]
-            != metadata["event_checkpoint_data_fingerprint"]
-        ):
-            raise ValueError(f"Qwen {label} row mixes EPM/TGTR lineage: {qa_id}")
         if validate_media:
             missing = [str(path) for path in row["videos"][0] if not Path(path).is_file()]
             if missing:
@@ -242,17 +212,12 @@ def _save_checkpoint(
                     "world_size": int(manifest_base["world_size"]),
                     "seed": int(manifest_base["seed"]),
                     "track": str(manifest_base["track"]),
-                    "train_data_sha256": str(manifest_base["train_data_sha256"]),
-                    "val_data_sha256": str(manifest_base["val_data_sha256"]),
-                    "base_model_config_sha256": str(manifest_base["base_model_config_sha256"]),
-                    "data_report_sha256": manifest_base.get("data_report_sha256"),
                     "training_contract": dict(manifest_base["training_contract"]),
                 },
                 staging / "trainer_state.pt",
             )
             manifest = {
                 **manifest_base,
-                "adapter_config_sha256": file_sha256(staging / "adapter_config.json"),
                 "checkpoint_step": global_step,
                 "checkpoint_storage_contract": "node_local_serialize_then_shared_atomic_publish",
             }
@@ -301,7 +266,7 @@ def main() -> int:
         val_rows = val_rows[: args.max_val_rows]
     track = TRACK_TGTR_ASSISTED_PRED
     launch_rank = int(os.environ.get("RANK", "0"))
-    audited_hashes = (
+    data_report = (
         _validate_data_report(
             args.data_report,
             expected_track=track,
@@ -311,21 +276,20 @@ def main() -> int:
         if args.data_report
         else None
     )
-    # An immutable data report already audits each media path. Without one,
-    # validate paths once on rank 0 to avoid redundant distributed I/O.
+    # Validate media paths once on rank 0 to avoid redundant distributed I/O.
     train_ids = _validate_rows(
         train_rows,
         "train",
         track,
         "train",
-        validate_media=audited_hashes is None and launch_rank == 0,
+        validate_media=launch_rank == 0,
     )
     val_ids = _validate_rows(
         val_rows,
         "val",
         track,
         "val",
-        validate_media=audited_hashes is None and launch_rank == 0,
+        validate_media=launch_rank == 0,
     )
     overlap = train_ids & val_ids
     if overlap:
@@ -336,10 +300,7 @@ def main() -> int:
         "track": track,
         "train_rows": len(train_rows),
         "val_rows": len(val_rows),
-        "train_data_sha256": audited_hashes["train"] if audited_hashes else file_sha256(args.train_data),
-        "val_data_sha256": audited_hashes["val"] if audited_hashes else file_sha256(args.val_data),
-        "data_report_sha256": audited_hashes["report"] if audited_hashes else None,
-        "base_model_config_sha256": file_sha256(args.model / "config.json"),
+        "data_report": str(args.data_report) if data_report else None,
         "distributed_backend": "torch_ddp",
         "gold_events_allowed": False,
     }
@@ -375,15 +336,10 @@ def main() -> int:
         raise FileExistsError(f"non-empty Qwen output directory has no resumable checkpoint: {args.output_dir}")
 
     if resume_checkpoint:
-        resume_manifest = load_qwen_adapter_manifest(
+        load_qwen_adapter_manifest(
             resume_checkpoint,
             expected_track=track,
-            expected_base_model_config_sha256=dry_report["base_model_config_sha256"],
         )
-        if resume_manifest["train_data_sha256"] != dry_report["train_data_sha256"]:
-            raise ValueError("Qwen resume checkpoint train-data hash mismatch")
-        if resume_manifest["val_data_sha256"] != dry_report["val_data_sha256"]:
-            raise ValueError("Qwen resume checkpoint validation-data hash mismatch")
 
     processor = AutoProcessor.from_pretrained(str(args.model), local_files_only=True, trust_remote_code=True)
     base = Qwen3VLForConditionalGeneration.from_pretrained(
@@ -429,10 +385,6 @@ def main() -> int:
             "world_size": world_size,
             "seed": args.seed,
             "track": track,
-            "train_data_sha256": dry_report["train_data_sha256"],
-            "val_data_sha256": dry_report["val_data_sha256"],
-            "base_model_config_sha256": dry_report["base_model_config_sha256"],
-            "data_report_sha256": dry_report["data_report_sha256"],
             "training_contract": {
                 "epochs": args.epochs,
                 "learning_rate": args.learning_rate,
@@ -467,17 +419,13 @@ def main() -> int:
         "track": track,
         "dataset": "trace",
         "base_model": str(args.model),
-        "base_model_config_sha256": dry_report["base_model_config_sha256"],
         "train_data": str(args.train_data),
         "val_data": str(args.val_data),
-        "train_data_sha256": dry_report["train_data_sha256"],
-        "val_data_sha256": dry_report["val_data_sha256"],
-        "data_report_sha256": dry_report["data_report_sha256"],
         "output_schema_fields": REQUIRED_SCHEMA_V2,
         "seed": args.seed,
         "trainer": "native_torch_ddp_peft",
         "world_size": world_size,
-        "provenance_contract": "source_row+predicted_event+tgtr_checkpoint",
+        "provenance_contract": "predicted_event+tgtr_checkpoint",
         "training_contract": {
             "epochs": args.epochs,
             "learning_rate": args.learning_rate,

@@ -34,8 +34,8 @@ def build_predicted_graph(
     height: int | None = None,
     split: str = "inference",
 ) -> dict[str, Any]:
-    hit_events = [event for event in events if getattr(event, "event_type", "hit") == "hit"]
-    bounce_events = [event for event in events if getattr(event, "event_type", "hit") == "bounce"]
+    hit_events = sorted((event for event in events if event.event_type == "hit"), key=lambda event: event.frame)
+    bounce_events = sorted((event for event in events if event.event_type == "bounce"), key=lambda event: event.frame)
     record = {
         "video": rally_id,
         "clip_id": rally_id,
@@ -52,8 +52,8 @@ def build_predicted_graph(
         "media": {"frames_dir": str(Path(frames_dir).resolve())},
     }
     graph = build_graph(record, split)
-    graph["graph_source"] = "f3ed_predicted"
-    graph["event_detector"] = "region_fusion" if any(event.source == "region_fusion" for event in events) else "f3ed"
+    graph["graph_source"] = "region_fusion_predicted"
+    graph["event_detector"] = "region_fusion"
     graph["bounce_events"] = record["bounce_events"]
     for stroke in graph.get("strokes") or []:
         frame = int(stroke["frame"])
@@ -68,6 +68,8 @@ def build_predicted_graph(
             stroke["bounce_after_gap"] = event.frame - frame
             stroke["bounce_after_confidence"] = event.confidence
     for stroke, event in zip(graph.get("strokes") or [], hit_events):
+        # Missing predictions stay unknown instead of becoming a negative label.
+        stroke["parsed"].update(event.attributes)
         stroke["confidence"] = event.confidence
         stroke["attribute_confidence"] = event.attribute_confidence
         stroke["source"] = event.source

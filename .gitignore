@@ -25,3 +25,5 @@ docs/public/*.pdf
 *.pth
 *.ckpt
 *.safetensors
+
+.omx
