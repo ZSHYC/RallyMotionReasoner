@@ -27,6 +27,8 @@ if nn is not None:
 
         def forward(self, features: Tensor, node_mask: Tensor | None = None) -> Tensor:
             base = self.input(features)
+            if node_mask is not None:
+                base = base * node_mask.unsqueeze(-1).to(base.dtype)
             local = self.local(base.transpose(1, 2)).transpose(1, 2)
             padding_mask = None if node_mask is None else ~node_mask.bool()
             global_context, _ = self.attention(

@@ -24,7 +24,7 @@
     </section>
 
     <section class="grid">
-      <article><h2>Event model</h2><p>TrajectoryExpert and VisualExpert exchange information through bidirectional cross-attention. Masks handle missing observations and padded temporal slots.</p></article>
+      <article><h2>Event model</h2><p>The current runtime averages independently checkpointed TrajectoryExpert and VisualExpert scores. A joint cross-attention model is defined but is not used by the checkpointed runtime.</p></article>
       <article><h2>Graph reasoning</h2><p>Hit nodes, bounce cues, temporal relations, motion statistics, and 800-dimensional frame descriptors are consumed by RGR.</p></article>
       <article><h2>Evidence</h2><p>Question-conditioned routing selects supporting strokes and key actions before optional Qwen generation.</p></article>
     </section>

@@ -8,17 +8,18 @@ The repository contains the model structure and integration code. It does not cl
 
 ![RallyMotionReasoner architecture: event detection, tactical graph, RGR reasoning, and grounded generation](assets/architecture.png)
 
+*The figure shows the intended joint event model. The current checkpointed runtime uses two independent experts with score-level fusion; the cross-attention and attribute heads shown in the figure are not active in that runtime.*
+
 ### Event detection
 
-The event detector is the only event backend in this repository. It combines two expert inputs:
+The current event backend combines two separately checkpointed experts:
 
 - **TrajectoryExpert** encodes ball position, velocity, acceleration, visibility, and temporal validity from TrackNet-style trajectories.
 - **VisualExpert** encodes a full-frame DINO feature together with four spatial crops, preserving both court context and local player motion.
-- **Bidirectional cross-attention** lets trajectory tokens query visual regions and visual regions query trajectory context.
-- **Event heads** predict event confidence, event type, hitter, and optional technique attributes.
-- **Masks** remove padded trajectory slots and missing visual regions before attention and pooling.
+- **Score-level fusion** averages the experts' eventness and hit/bounce type scores.
+- **MotionRegionEventModel** defines bidirectional cross-attention and optional attribute heads, but no checkpointed training or inference path uses it yet.
 
-The runtime loads `trajectory_expert.pt` and `visual_expert.pt` from one expert directory. It decodes hit and bounce events with temporal suppression. Bounce events remain separate graph cues; they are not converted into player stroke nodes.
+The runtime loads `trajectory_expert.pt` and `visual_expert.pt` from one expert directory. It decodes hit and bounce events with temporal suppression. It does not currently predict hitter or technique attributes. Bounce events remain separate graph cues; they are not converted into player stroke nodes.
 
 ### Graph and RGR
 
@@ -26,9 +27,9 @@ Hit events become stroke nodes. Bounce events provide timing context such as the
 
 - 800-dimensional frame descriptors;
 - 24-dimensional motion statistics derived from those descriptors;
-- shot timing and event attributes;
+- shot timing and event attributes when available;
 - temporal relations between neighboring strokes;
-- same-player relations where the hitter is known;
+- same-player relations where the hitter is known (the current event runtime does not supply hitter labels);
 - bounce-aware structural tokens.
 
 The graph loader and event exporter use the same structured feature payload, so offline RGR data and online inference share the frame alignment contract.

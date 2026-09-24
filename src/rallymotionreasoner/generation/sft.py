@@ -3,7 +3,19 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from rallymotionreasoner.generation.qwen import _prepare_qwen3_vision_inputs
 from rallymotionreasoner.schema import OPTIONAL_SCHEMA, REQUIRED_SCHEMA, validate_prediction_payload
+
+
+def _sft_video_timing(row: dict[str, Any]) -> tuple[list[int] | None, float | None]:
+    metadata = row.get("e2e_metadata") or {}
+    frame_indices = metadata.get("video_frame_indices")
+    fps = metadata.get("video_fps")
+    if frame_indices is None and fps is None:
+        return None, None
+    if frame_indices is None or fps is None:
+        raise ValueError("e2e_metadata.video_frame_indices and video_fps must be provided together")
+    return frame_indices, fps
 
 
 def structured_video_messages(row: dict[str, Any], *, include_answer: bool) -> list[dict[str, Any]]:
@@ -49,16 +61,22 @@ def structured_video_messages(row: dict[str, Any], *, include_answer: bool) -> l
 def prepare_qwen_sft_item(processor: Any, row: dict[str, Any], device: Any) -> dict[str, Any]:
     """Create a batch of one and mask every token except the assistant answer."""
     import torch
-    from qwen_vl_utils import process_vision_info
 
     full_messages = structured_video_messages(row, include_answer=True)
     prompt_messages = structured_video_messages(row, include_answer=False)
     full_text = processor.apply_chat_template(full_messages, tokenize=False, add_generation_prompt=False)
     prompt_text = processor.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)
-    image_inputs, video_inputs, video_kwargs = process_vision_info(full_messages, return_video_kwargs=True)
-    inputs = processor(text=[full_text], images=image_inputs, videos=video_inputs, return_tensors="pt", **video_kwargs)
+    frame_indices, fps = _sft_video_timing(row)
+    processor_kwargs = _prepare_qwen3_vision_inputs(
+        full_messages,
+        frame_count=len(row["videos"][0]),
+        frame_indices=frame_indices,
+        fps=fps,
+    )
+    inputs = processor(text=[full_text], **processor_kwargs)
     prompt_inputs = processor(
-        text=[prompt_text], images=image_inputs, videos=video_inputs, return_tensors="pt", **video_kwargs
+        text=[prompt_text],
+        **processor_kwargs,
     )
     prompt_length = int(prompt_inputs["attention_mask"][0].sum())
     full_ids = inputs["input_ids"][0]

@@ -26,6 +26,8 @@ class EventRuntimeOutput:
 
 
 EVENT_TYPES = ("hit", "bounce")
+# ponytail: the checkpoint stores a frame radius without training FPS; use 25 until its contract records FPS.
+NMS_REFERENCE_FPS = 25.0
 
 
 def _contract(payload: dict[str, Any], *, kind: str, radius: int, span: float, dimension: int) -> dict[str, Any]:
@@ -87,7 +89,10 @@ def _scores(model: Any, rows: Any, times: Any, contract: dict[str, Any], device:
             relative = ((times[indices] - times[centers, None]) * valid).float()
             batch = torch.cat((batch, relative[..., None]), dim=-1)
         with torch.inference_mode():
-            result = model(batch.to(device=device, dtype=torch.float32))
+            result = model(
+                batch.to(device=device, dtype=torch.float32),
+                padding_mask=valid.to(device=device),
+            )
         outputs.append(
             result["eventness_logit"].sigmoid()[:, None] * result["type_logits"].softmax(dim=-1)
         )
@@ -96,17 +101,21 @@ def _scores(model: Any, rows: Any, times: Any, contract: dict[str, Any], device:
 
 def _decode(scores: Any, frames: list[int], fps: float, threshold: float, radius: int) -> list[DecodedEvent]:
     selected: list[tuple[int, int, float]] = []
-    for column in range(len(EVENT_TYPES)):
-        kept: list[int] = []
-        candidates = sorted(
-            ((int(frame), float(scores[index, column])) for index, frame in enumerate(frames)),
-            key=lambda item: (-item[1], item[0]),
-        )
-        for frame, score in candidates:
-            if score < threshold or any(abs(frame - previous) <= radius for previous in kept):
-                continue
-            kept.append(frame)
-            selected.append((frame, column, score))
+    kept: list[int] = []
+    candidates = sorted(
+        (
+            (int(frame), column, float(scores[index, column]))
+            for index, frame in enumerate(frames)
+            for column in range(len(EVENT_TYPES))
+        ),
+        key=lambda item: (-item[2], item[0], item[1]),
+    )
+    suppression_seconds = radius / NMS_REFERENCE_FPS
+    for frame, column, score in candidates:
+        if score < threshold or any(abs(frame - previous) / fps <= suppression_seconds for previous in kept):
+            continue
+        kept.append(frame)
+        selected.append((frame, column, score))
     selected.sort(key=lambda item: (item[0], EVENT_TYPES[item[1]]))
     empty_attributes = {field: None for field in ATTRIBUTE_FIELDS}
     empty_confidence = {field: 0.0 for field in ATTRIBUTE_FIELDS}

@@ -67,24 +67,59 @@ if nn is not None:
             self.gru = nn.GRU(64, 64, batch_first=True, bidirectional=True)
             self._init_heads()
 
-        def encode(self, trajectory: Tensor) -> tuple[Tensor, Tensor]:
-            if trajectory.ndim != 3 or trajectory.shape[-1] != 11:
-                raise ValueError("trajectory must have shape [B,T,11]")
-            valid = trajectory[..., 9] > 0.5
+        def _encode_sequence(self, trajectory: Tensor) -> Tensor:
             values = F.linear(trajectory, self.proj.weight[:, :11], self.proj.bias)
             values = self.input_dropout(F.gelu(self.input_norm(values))).transpose(1, 2)
             for block in self.convs:
                 values = block(values)
             values, _ = self.gru(values.transpose(1, 2))
+            return values
+
+        @staticmethod
+        def _pool(values: Tensor, valid: Tensor, center: int) -> Tensor:
             mask = valid[..., None]
             temporal_mean = (values * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
             temporal_max = values.masked_fill(~mask, -torch.inf).amax(dim=1)
-            temporal_max = torch.where(torch.isfinite(temporal_max), temporal_max, torch.zeros_like(temporal_max))
-            center = values[:, values.shape[1] // 2]
-            return values, torch.cat((center, temporal_mean, temporal_max), dim=-1)
+            temporal_max = torch.where(
+                torch.isfinite(temporal_max), temporal_max, torch.zeros_like(temporal_max)
+            )
+            return torch.cat((values[:, center], temporal_mean, temporal_max), dim=-1)
 
-        def forward(self, trajectory: Tensor) -> dict[str, Tensor]:
-            _, pooled = self.encode(trajectory)
+        def encode(self, trajectory: Tensor, padding_mask: Tensor | None = None) -> tuple[Tensor, Tensor]:
+            if trajectory.ndim != 3 or trajectory.shape[-1] != 11:
+                raise ValueError("trajectory must have shape [B,T,11]")
+            valid = trajectory[..., 9] > 0.5
+            if padding_mask is None:
+                values = self._encode_sequence(trajectory)
+                return values, self._pool(values, valid, values.shape[1] // 2)
+            if padding_mask.shape != trajectory.shape[:2]:
+                raise ValueError("padding_mask must have shape [B,T]")
+            padding_mask = padding_mask.bool()
+            if bool(padding_mask.all()):
+                values = self._encode_sequence(trajectory)
+                return values, self._pool(values, valid, values.shape[1] // 2)
+            center = trajectory.shape[1] // 2
+            if not bool(padding_mask[:, center].all()):
+                raise ValueError("padding_mask must include the center timestep")
+            values = trajectory.new_zeros((*trajectory.shape[:2], 128))
+            pooled = values.new_empty((trajectory.shape[0], 384))
+            complete = padding_mask.all(dim=1)
+            if bool(complete.any()):
+                encoded = self._encode_sequence(trajectory[complete])
+                values[complete] = encoded
+                pooled[complete] = self._pool(encoded, valid[complete], center)
+            for index in (~complete).nonzero().flatten().tolist():
+                positions = padding_mask[index].nonzero().flatten()
+                encoded = self._encode_sequence(trajectory[index : index + 1, positions])
+                values[index, positions] = encoded[0]
+                local_center = int((positions < center).sum())
+                pooled[index] = self._pool(
+                    encoded, valid[index : index + 1, positions], local_center
+                )[0]
+            return values, pooled
+
+        def forward(self, trajectory: Tensor, padding_mask: Tensor | None = None) -> dict[str, Tensor]:
+            _, pooled = self.encode(trajectory, padding_mask)
             return self._heads(pooled)
 
 
@@ -106,9 +141,7 @@ if nn is not None:
             self.gru = nn.GRU(64, 64, batch_first=True, bidirectional=True)
             self._init_heads()
 
-        def encode(self, visual: Tensor) -> tuple[Tensor, Tensor]:
-            if visual.ndim != 3 or visual.shape[-1] != 3840:
-                raise ValueError("visual must have shape [B,T,3840]")
+        def _encode_sequence(self, visual: Tensor) -> Tensor:
             tokens = visual.reshape(*visual.shape[:2], 5, 768).to(self.proj.weight.dtype)
             projected = self.input_norm(self.proj(tokens))
             batch_size, steps, regions, hidden = projected.shape
@@ -123,13 +156,44 @@ if nn is not None:
             values = global_token + (weights.unsqueeze(-1) * keys).sum(dim=2)
             values = self.input_dropout(F.gelu(self.input_norm(values))).transpose(1, 2)
             values, _ = self.gru(values.transpose(1, 2))
-            pooled = torch.cat(
-                (values[:, values.shape[1] // 2], values.mean(dim=1), values.amax(dim=1)), dim=-1
-            )
+            return values
+
+        @staticmethod
+        def _pool(values: Tensor, center: int) -> Tensor:
+            return torch.cat((values[:, center], values.mean(dim=1), values.amax(dim=1)), dim=-1)
+
+        def encode(self, visual: Tensor, padding_mask: Tensor | None = None) -> tuple[Tensor, Tensor]:
+            if visual.ndim != 3 or visual.shape[-1] != 3840:
+                raise ValueError("visual must have shape [B,T,3840]")
+            if padding_mask is None:
+                values = self._encode_sequence(visual)
+                return values, self._pool(values, values.shape[1] // 2)
+            if padding_mask.shape != visual.shape[:2]:
+                raise ValueError("padding_mask must have shape [B,T]")
+            padding_mask = padding_mask.bool()
+            if bool(padding_mask.all()):
+                values = self._encode_sequence(visual)
+                return values, self._pool(values, values.shape[1] // 2)
+            center = visual.shape[1] // 2
+            if not bool(padding_mask[:, center].all()):
+                raise ValueError("padding_mask must include the center timestep")
+            values = visual.new_zeros((*visual.shape[:2], 128), dtype=self.proj.weight.dtype)
+            pooled = values.new_empty((visual.shape[0], 384))
+            complete = padding_mask.all(dim=1)
+            if bool(complete.any()):
+                encoded = self._encode_sequence(visual[complete])
+                values[complete] = encoded
+                pooled[complete] = self._pool(encoded, center)
+            for index in (~complete).nonzero().flatten().tolist():
+                positions = padding_mask[index].nonzero().flatten()
+                encoded = self._encode_sequence(visual[index : index + 1, positions])
+                values[index, positions] = encoded[0]
+                local_center = int((positions < center).sum())
+                pooled[index] = self._pool(encoded, local_center)[0]
             return values, pooled
 
-        def forward(self, visual: Tensor) -> dict[str, Tensor]:
-            _, pooled = self.encode(visual)
+        def forward(self, visual: Tensor, padding_mask: Tensor | None = None) -> dict[str, Tensor]:
+            _, pooled = self.encode(visual, padding_mask)
             return self._heads(pooled)
 
 

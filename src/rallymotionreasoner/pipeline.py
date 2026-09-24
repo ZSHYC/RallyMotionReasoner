@@ -11,6 +11,28 @@ from rallymotionreasoner.video import local_indices, uniform_indices
 OUTPUT_SCHEMA = "rallymotionreasoner.answer.v1"
 
 
+def select_frame_indices(
+    num_frames: int,
+    candidates: list[dict[str, Any]],
+    *,
+    max_global_frames: int,
+    local_frames_per_candidate: int,
+    max_frames: int = 32,
+) -> list[int]:
+    """Keep every evidence center, then global context and local detail within the video budget."""
+    if num_frames <= 0 or max_frames <= 0:
+        return []
+    centers = [max(0, min(num_frames - 1, int(item["frame"]))) for item in candidates]
+    selected = set(centers[:max_frames])
+    selected.update(uniform_indices(num_frames, min(max_global_frames, max_frames - len(selected))))
+    for center in centers:
+        for index in local_indices(center, num_frames, radius=8, k=local_frames_per_candidate):
+            if len(selected) >= max_frames:
+                return sorted(selected)
+            selected.add(index)
+    return sorted(selected)
+
+
 class RallyMotionReasoner:
     def __init__(
         self,
@@ -76,13 +98,25 @@ class RallyMotionReasoner:
             candidates = self.selector.select(graph, question, runtime.frame_features, runtime.frame_indices)
             if not candidates:
                 raise RuntimeError("RGR produced no evidence candidates")
-            frame_selection = set(uniform_indices(len(media.frame_paths), max_global_frames))
-            for candidate in candidates:
-                frame_selection.update(
-                    local_indices(int(candidate["frame"]), len(media.frame_paths), radius=8, k=local_frames_per_candidate)
+            candidates = [candidate for candidate in candidates if candidate["selected"]]
+            if candidates:
+                frame_selection = select_frame_indices(
+                    len(media.frame_paths),
+                    candidates,
+                    max_global_frames=max_global_frames,
+                    local_frames_per_candidate=local_frames_per_candidate,
                 )
-            selected_frames = [media.frame_paths[index] for index in sorted(frame_selection)]
-            answer = self.qwen.generate(selected_frames, question, candidates)
+                selected_frames = [media.frame_paths[index] for index in frame_selection]
+                answer = self.qwen.generate(
+                    selected_frames, question, candidates, frame_indices=frame_selection, fps=media.fps
+                )
+            else:
+                answer = {
+                    "answer": "",
+                    "answerability": "unanswerable",
+                    "explanation": "No event met the RGR evidence threshold.",
+                    "causal_strength": "insufficient",
+                }
             by_id = {int(item["shot_id"]): item for item in candidates}
             evidence = []
             for shot_id in answer.get("evidence_shot_ids", []):
@@ -120,6 +154,7 @@ class RallyMotionReasoner:
                     "mode": "predicted",
                     "degraded": degraded,
                     "degraded_reason": answer.get("parse_error"),
+                    "abstention_reason": "low_evidence" if not candidates else None,
                     "graph_source": graph_source,
                     "event_feature_backend": runtime.feature_provenance.backend,
                     "event_detector_backend": self.event.backend,

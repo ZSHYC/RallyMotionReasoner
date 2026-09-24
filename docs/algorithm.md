@@ -25,13 +25,13 @@ The event detector combines two expert streams.
 
 ### Cross-stream fusion
 
-`src/rallymotionreasoner/event_detection/model.py` uses bidirectional cross-attention: trajectory tokens attend to visual regions, while visual regions attend to trajectory context. Invalid trajectory slots and missing visual regions are masked before attention and pooling. Event heads predict eventness, event type, hitter, and optional technique attributes.
+`src/rallymotionreasoner/event_detection/model.py` defines a joint `MotionRegionEventModel` with bidirectional cross-attention and optional attribute heads. It has no checkpointed training or inference path in this repository. The current runtime evaluates `TrajectoryExpert` and `VisualExpert` independently and averages their eventness/type scores. Its decoded hitter and technique attributes remain unknown.
 
 The runtime in `src/rallymotionreasoner/event_detection/runtime.py` loads `trajectory_expert.pt` and `visual_expert.pt`, evaluates dense windows, fuses the expert scores, and decodes hit and bounce events. Bounce is a graph cue, not a player stroke.
 
 ## 2. Event graph and feature contract
 
-`src/rallymotionreasoner/event_detection/graph.py` creates stroke nodes from hit events and stores bounce events separately. Temporal edges connect neighboring strokes. Same-player edges are added only when the hitter is known. Stroke nodes retain event timing, confidence, attributes, and bounce gaps.
+`src/rallymotionreasoner/event_detection/graph.py` creates stroke nodes from hit events and stores bounce events separately. Temporal edges connect neighboring strokes. Same-player edges require known hitter labels, which the current event runtime does not produce. Stroke nodes retain event timing, confidence, available attributes, and bounce gaps.
 
 `shot_feature_payload` in `src/rallymotionreasoner/event_detection/features.py` is the shared export contract for offline data and online inference. It aligns hit frames with 800-dimensional frame descriptors and exposes a 24-dimensional motion slice for downstream reasoning.
 
@@ -47,9 +47,11 @@ RGR consumes the event graph, shot descriptors, motion statistics, and structura
 
 The implementation is in `src/rallymotionreasoner/graph_reasoning/`. Event data is generated with `event_backend=motion_region`; no alternate event backend is maintained.
 
+Ball-position and contact-time heads are optional auxiliary targets. They receive supervision only when `feature_extraction.visual_supervision_path` is configured; the default configuration does not provide that file. These target values are not fed into the RGR encoder.
+
 ## 4. Evidence routing and generation
 
-The evidence router ranks candidate strokes and key actions using the question representation and RGR state. Key-action scores combine evidence and conditional key probabilities. The generator receives validated candidate IDs, selected evidence frames, global context, and predicted event information. Output validation is defined in `src/rallymotionreasoner/schema.py`.
+The evidence router ranks candidate strokes and key actions using the question representation and RGR state. Key-action scores combine evidence and conditional key probabilities. Candidates below the RGR evidence threshold are withheld from generation; when none qualify, the pipeline returns an unanswerable result. Otherwise, the generator receives validated candidate IDs, selected evidence frames, global context, and predicted event information. The frame budget keeps selected evidence centers, and Qwen receives their original frame indices and source FPS for timestamps. SFT rows need both `e2e_metadata.video_frame_indices` and `video_fps` to use source timing; older rows retain the utility's default timing. Output validation is defined in `src/rallymotionreasoner/schema.py`.
 
 ## 5. Data and checkpoints
 

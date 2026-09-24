@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,60 @@ from typing import Any
 from rallymotionreasoner.schema import REQUIRED_SCHEMA, validate_prediction_payload
 
 REQUIRED_QWEN_FIELDS = set(REQUIRED_SCHEMA)
+
+
+def _prepare_qwen3_vision_inputs(
+    messages: list[dict[str, Any]],
+    *,
+    frame_count: int,
+    frame_indices: list[int] | None = None,
+    fps: float | None = None,
+) -> dict[str, Any]:
+    from qwen_vl_utils import process_vision_info
+
+    if (frame_indices is None) != (fps is None):
+        raise ValueError("frame_indices and fps must be provided together")
+    if frame_indices is not None:
+        if len(frame_indices) != frame_count:
+            raise ValueError("frame_indices and video frames must have the same count")
+        if not frame_indices or any(not isinstance(value, int) for value in frame_indices):
+            raise ValueError("frame_indices must be a non-empty integer list")
+        if any(right <= left for left, right in zip(frame_indices, frame_indices[1:])):
+            raise ValueError("frame_indices must be strictly increasing")
+        if not math.isfinite(float(fps)) or float(fps) <= 0:
+            raise ValueError("fps must be a positive finite number")
+
+    images, video_inputs, video_kwargs = process_vision_info(
+        messages,
+        image_patch_size=16,
+        return_video_kwargs=True,
+        return_video_metadata=True,
+    )
+    if video_inputs is None:
+        videos, video_metadata = None, None
+    else:
+        videos, metadata = zip(*video_inputs)
+        videos, video_metadata = list(videos), [dict(item) for item in metadata]
+
+    if frame_indices is not None:
+        if video_metadata is None or len(video_metadata) != 1:
+            raise ValueError("source timing requires exactly one processed video")
+        processed_indices = video_metadata[0].get("frames_indices")
+        if not isinstance(processed_indices, list | tuple) or len(processed_indices) < len(frame_indices):
+            raise ValueError("processed video frame count does not match source timing")
+        video_metadata[0]["frames_indices"] = frame_indices + [frame_indices[-1]] * (
+            len(processed_indices) - len(frame_indices)
+        )
+        video_metadata[0]["fps"] = float(fps)
+        video_metadata[0]["total_num_frames"] = frame_indices[-1] + 1
+    return {
+        "images": images,
+        "videos": videos,
+        "video_metadata": video_metadata,
+        "return_tensors": "pt",
+        **video_kwargs,
+        "do_resize": False,
+    }
 
 
 def parse_qwen_json(raw: str) -> dict[str, Any] | None:
@@ -85,18 +140,31 @@ class QwenVideoBackend:
             self.model = PeftModel.from_pretrained(self.model, str(adapter), is_trainable=False).eval()
             self.adapter = str(adapter)
 
-    def generate(self, frame_paths: list[Path], question: str, candidates: list[dict[str, Any]], *, max_new_tokens: int = 512) -> dict[str, Any]:
+    def generate(
+        self,
+        frame_paths: list[Path],
+        question: str,
+        candidates: list[dict[str, Any]],
+        *,
+        max_new_tokens: int = 512,
+        frame_indices: list[int] | None = None,
+        fps: float | None = None,
+    ) -> dict[str, Any]:
         if not frame_paths:
             raise ValueError("Qwen video inference requires non-empty frames")
-        try:
-            from qwen_vl_utils import process_vision_info
-        except ImportError as exc:
-            raise RuntimeError("qwen-vl-utils is required; image-mode fallback is intentionally disabled") from exc
         prompt = qwen_prompt(question, candidates)
         messages = [{"role": "user", "content": [{"type": "video", "video": [str(path) for path in frame_paths]}, {"type": "text", "text": prompt}]}]
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
-        inputs = self.processor(text=[text], images=images, videos=videos, return_tensors="pt", **video_kwargs)
+        try:
+            processor_kwargs = _prepare_qwen3_vision_inputs(
+                messages,
+                frame_count=len(frame_paths),
+                frame_indices=frame_indices,
+                fps=fps,
+            )
+        except ImportError as exc:
+            raise RuntimeError("qwen-vl-utils is required; image-mode fallback is intentionally disabled") from exc
+        inputs = self.processor(text=[text], **processor_kwargs)
         device = next(self.model.parameters()).device
         inputs = {key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()}
         with self.torch.no_grad():

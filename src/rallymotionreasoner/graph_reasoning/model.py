@@ -117,16 +117,7 @@ if nn is not None:
             question = self.question_norm(self._sequence_embedding(batch["question_ids"]))
             semantics = self.semantic_norm(self._sequence_embedding(batch["node_ids"]))
             visual = self.visual_adapter(batch["visual_features"], batch.get("node_mask"))
-            state = torch.cat(
-                [
-                    batch.get("ball_xy", visual.new_zeros((*visual.shape[:2], 2))),
-                    batch.get("ball_visible", visual.new_zeros(visual.shape[:2])).unsqueeze(-1),
-                    batch.get("ball_mask", visual.new_zeros(visual.shape[:2])).unsqueeze(-1),
-                    batch.get("contact_frame", visual.new_zeros(visual.shape[:2])).unsqueeze(-1),
-                    batch.get("contact_mask", visual.new_zeros(visual.shape[:2])).unsqueeze(-1),
-                ],
-                dim=-1,
-            )
+            state = visual.new_zeros((*visual.shape[:2], 6))
             visual = visual + self.state_adapter(state)
             if self.motion_adapter is not None and batch.get("motion_features") is not None:
                 motion = batch["motion_features"]

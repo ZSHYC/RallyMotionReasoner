@@ -2,6 +2,63 @@ import torch
 
 from rallymotionreasoner.graph_reasoning.graph_transformer import EDGE_TYPE_TO_ID
 from rallymotionreasoner.graph_reasoning.model import RallyGraphReasoner
+from rallymotionreasoner.graph_reasoning.motion_adapter import TennisMotionAdapter
+
+
+def test_motion_adapter_padding_does_not_change_valid_nodes() -> None:
+    torch.manual_seed(0)
+    adapter = TennisMotionAdapter(input_dim=8, hidden_dim=16, num_heads=4, dropout=0.0).eval()
+    valid_features = torch.randn(1, 2, 8)
+    padded_features = torch.cat([valid_features, torch.zeros(1, 1, 8)], dim=1)
+
+    with torch.no_grad():
+        output = adapter(valid_features, torch.ones(1, 2, dtype=torch.bool))
+        padded_output = adapter(padded_features, torch.tensor([[True, True, False]]))
+
+    assert torch.allclose(output, padded_output[:, :2])
+
+
+def test_rgr_auxiliary_targets_do_not_change_model_outputs() -> None:
+    torch.manual_seed(0)
+    model = RallyGraphReasoner(
+        vocab_size=16,
+        label_maps={"level_1": {"A": 0}},
+        visual_feature_dim=8,
+        hidden_dim=32,
+        num_layers=1,
+        num_heads=4,
+        dropout=0.0,
+    ).eval()
+    batch = {
+        "question_ids": torch.tensor([[2, 3]]),
+        "node_ids": torch.tensor([[[4, 5], [6, 7]]]),
+        "node_frames": torch.tensor([[0.2, 0.8]]),
+        "visual_features": torch.randn(1, 2, 8),
+        "ball_xy": torch.tensor([[[0.2, 0.3], [0.4, 0.5]]]),
+        "ball_visible": torch.tensor([[1.0, 0.7]]),
+        "ball_mask": torch.ones(1, 2),
+        "contact_frame": torch.tensor([[0.2, 0.8]]),
+        "contact_mask": torch.ones(1, 2),
+        "node_mask": torch.ones(1, 2, dtype=torch.bool),
+        "edge_index": torch.zeros(1, 1, 2, dtype=torch.long),
+        "edge_type": torch.zeros(1, 1, dtype=torch.long),
+        "edge_mask": torch.zeros(1, 1, dtype=torch.bool),
+    }
+    changed_targets = dict(batch)
+    changed_targets.update(
+        ball_xy=1.0 - batch["ball_xy"],
+        ball_visible=1.0 - batch["ball_visible"],
+        ball_mask=torch.zeros_like(batch["ball_mask"]),
+        contact_frame=1.0 - batch["contact_frame"],
+        contact_mask=torch.zeros_like(batch["contact_mask"]),
+    )
+
+    with torch.no_grad():
+        output = model(batch)
+        changed_output = model(changed_targets)
+
+    assert output.keys() == changed_output.keys()
+    assert all(torch.allclose(output[key], changed_output[key]) for key in output)
 
 
 def test_rgr_forward_uses_paper_relations() -> None:
