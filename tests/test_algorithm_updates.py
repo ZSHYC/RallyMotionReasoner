@@ -3,15 +3,16 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rallymotionreasoner.data.graph_qa import match_gold_frames_to_predicted_shots, tokenize
+from rallymotionreasoner.data.graph_qa import GraphQADataset, collate, match_gold_frames_to_predicted_shots, tokenize
 from rallymotionreasoner.evaluation.event_metrics import one_to_one_match
 from rallymotionreasoner.event_detection.decoder import DecodedEvent
 from rallymotionreasoner.event_detection.features import ball_frame_features
 from rallymotionreasoner.event_detection.graph import build_predicted_graph
 from rallymotionreasoner.event_detection.model import MotionRegionEventModel
 from rallymotionreasoner.features.ball_trajectory import normalize_trajectory, trajectory_rows
+from rallymotionreasoner.graph_reasoning.graph_transformer import RelationTemporalBlock, TacticalGraphBatch
 from rallymotionreasoner.graph_reasoning.model import RallyGraphReasoner
-from rallymotionreasoner.training.eval import prf
+from rallymotionreasoner.training.eval import evaluate_internal, prf
 from rallymotionreasoner.training.losses import compute_loss
 
 
@@ -20,6 +21,71 @@ def test_temporal_matching_maximizes_cardinality() -> None:
     assert match_gold_frames_to_predicted_shots(
         [{"shot_id": 1, "frame": 12}, {"shot_id": 2, "frame": 30}], [0, 15], tolerance=16
     ) == {1, 2}
+
+
+def test_motion_region_targets_use_fps_scaled_tolerance_and_keep_keys_within_evidence() -> None:
+    rows = [{
+        "qa_id": "q", "rally_id": "r", "question": "why?",
+        "gold_answer": {"evidence_frames": [70], "key_action_frames": [140]},
+    }]
+    graphs = {"r": {
+        "fps": 50.0,
+        "strokes": [{"shot_id": 1, "frame": 100}, {"shot_id": 2, "frame": 140}],
+        "edges": [],
+    }}
+    dataset = GraphQADataset(
+        rows, graphs, {"<unk>": 1}, {}, split="train", visual_feature_dim=1,
+        include_label_tokens=False, require_visual_features=False,
+        graph_source="motion_region", evidence_frame_tolerance=16,
+    )
+
+    assert dataset[0].evidence_targets == [1.0, 0.0]
+    assert dataset[0].key_targets == [0.0, 0.0]
+
+
+def test_evaluation_allows_empty_evidence_prediction_below_threshold() -> None:
+    item = GraphQADataset(
+        [{"qa_id": "q", "rally_id": "r", "question": "why?", "gold_answer": {}}],
+        {"r": {"strokes": [{"shot_id": 1, "frame": 10}], "edges": []}},
+        {"<unk>": 1}, {name: {"null": 0} for name in ("level_1", "level_2", "level_3")},
+        split="val", visual_feature_dim=1,
+        include_label_tokens=False, require_visual_features=False, graph_source="motion_region",
+    )[0]
+
+    class LowConfidenceModel(torch.nn.Module):
+        def forward(self, batch):
+            shape = batch["node_mask"].shape
+            return {
+                "evidence_logits": torch.full(shape, -10.0),
+                "key_action_logits": torch.full(shape, -10.0),
+                **{f"{name}_logits": torch.zeros(shape[0], 1) for name in ("level_1", "level_2", "level_3")},
+            }
+
+    metrics = evaluate_internal(
+        LowConfidenceModel(), [collate([item])], torch.device("cpu"), evidence_threshold=0.45
+    )
+    assert metrics["evidence_f1"] == 1.0
+
+
+def test_zero_time_delta_uses_dedicated_bucket_with_legacy_compatibility() -> None:
+    block = RelationTemporalBlock(hidden_dim=4, num_heads=1, num_relations=2, dropout=0.0)
+    with torch.no_grad():
+        block.time_bias.weight.copy_(torch.arange(17, dtype=torch.float32).unsqueeze(1))
+    batch = TacticalGraphBatch(
+        node_tokens=torch.zeros(1, 2, 4),
+        edge_index=torch.zeros(1, 1, 2, dtype=torch.long),
+        edge_type=torch.zeros(1, 1, dtype=torch.long),
+        node_frames=torch.tensor([[0.2, 0.8]]),
+        edge_mask=torch.zeros(1, 1, dtype=torch.bool),
+    )
+    relation_bias = torch.zeros(1, 1, 2, 2)
+
+    corrected = block._attention_bias(batch, relation_bias).reshape(1, 1, 2, 2)
+    block.zero_time_bucket = False
+    legacy = block._attention_bias(batch, relation_bias).reshape(1, 1, 2, 2)
+
+    assert torch.equal(corrected[0, 0].diag(), torch.tensor([8.0, 8.0]))
+    assert torch.equal(legacy[0, 0].diag(), torch.tensor([9.0, 9.0]))
 
 
 def test_question_tokenizer_keeps_cjk_coverage() -> None:

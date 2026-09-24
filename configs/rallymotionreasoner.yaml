@@ -20,6 +20,7 @@ module_flags:
   vlm_adapter: structured_prompt
 
 model:
+  time_bias_version: 2
   hidden_dim: 256
   num_layers: 3
   num_heads: 8

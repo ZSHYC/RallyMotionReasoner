@@ -83,8 +83,6 @@ def evaluate_internal(
         for i, item in enumerate(batch["items"]):
             n = len(item.shot_ids)
             pred_ev = {item.shot_ids[j] for j in range(n) if float(ev_prob[i, j]) >= evidence_threshold}
-            if not pred_ev:
-                pred_ev = {item.shot_ids[int(torch.argmax(ev_prob[i, :n]))]}
             gold_ev = {sid for sid, target in zip(item.shot_ids, item.evidence_targets) if target > 0.5}
             evidence_f1 += prf(pred_ev, gold_ev)[2]
             pred_key = {item.shot_ids[j] for j in range(n) if float(key_prob[i, j]) >= 0.5}

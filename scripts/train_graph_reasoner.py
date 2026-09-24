@@ -21,6 +21,8 @@ from rallymotionreasoner.configs import (
     load_graph_reasoner_config,
     module_summary,
     resolve_paths_config,
+    resume_config_matches,
+    saved_time_bias_version,
 )
 from rallymotionreasoner.data.graph_qa import (
     collate,
@@ -37,7 +39,7 @@ def build_model(cfg: dict[str, Any], vocab_size: int, label_maps: dict[str, dict
     model_cfg = cfg.get("model", {})
     feature_cfg = cfg.get("feature_extraction", {})
     motion_dim = int(feature_cfg.get("motion_feature_dim", 0))
-    return RallyGraphReasoner(
+    model = RallyGraphReasoner(
         vocab_size,
         label_maps,
         visual_feature_dim=int(feature_cfg.get("feature_dim", 800)),
@@ -47,6 +49,8 @@ def build_model(cfg: dict[str, Any], vocab_size: int, label_maps: dict[str, dict
         num_heads=int(model_cfg.get("num_heads", 8)),
         dropout=float(model_cfg.get("dropout", 0.1)),
     )
+    model.graph.set_time_bias_version(int(model_cfg.get("time_bias_version", 2)))
+    return model
 
 
 def main() -> int:
@@ -167,11 +171,16 @@ def main() -> int:
         state = torch.load(trainer_state_path, map_location="cpu", weights_only=False)
         if state.get("schema") != "rallymotionreasoner.rgr_trainer.v1":
             raise ValueError(f"invalid RGR trainer state schema: {state.get('schema')}")
-        if state.get("config") != cfg or state.get("vocab") != meta["vocab"] or state.get("label_maps") != meta["label_maps"]:
+        if not resume_config_matches(state.get("config"), cfg):
+            raise ValueError("RGR resume requires the same configuration, vocabulary and label maps")
+        if state.get("vocab") != meta["vocab"] or state.get("label_maps") != meta["label_maps"]:
             raise ValueError("RGR resume requires the same configuration, vocabulary and label maps")
         if state.get("runtime_contract") != runtime_contract:
             raise ValueError("RGR trainer state GPU runtime contract mismatch")
         model.load_state_dict(state["model_state"], strict=True)
+        resume_time_bias_version = saved_time_bias_version(state)
+        model.graph.set_time_bias_version(resume_time_bias_version)
+        cfg["model"]["time_bias_version"] = resume_time_bias_version
         optimizer.load_state_dict(state["optimizer_state"])
         scaler.load_state_dict(state["scaler_state"])
         generator.set_state(state["generator_state"])
@@ -238,6 +247,7 @@ def main() -> int:
             "vocab": meta["vocab"],
             "label_maps": meta["label_maps"],
             "runtime_contract": runtime_contract,
+            "time_bias_version": model.graph.time_bias_version,
             "elapsed_seconds": elapsed_before + time.time() - started,
         }
         temporary_state = trainer_state_path.with_name(f".{trainer_state_path.name}.{os.getpid()}.tmp")
@@ -291,6 +301,7 @@ def main() -> int:
             "dropout": float(cfg.get("model", {}).get("dropout", 0.1)),
             "visual_feature_dim": int(cfg.get("feature_extraction", {}).get("feature_dim", 800)),
             "motion_feature_dim": int(model.motion_feature_dim),
+            "time_bias_version": model.graph.time_bias_version,
             "thresholds": {"evidence_threshold": best_t},
             "config": cfg,
             "architecture": cfg.get("architecture", "RallyMotionReasoner-RGR"),

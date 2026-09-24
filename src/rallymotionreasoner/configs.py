@@ -39,6 +39,8 @@ def validate_paper_config(config: dict[str, Any]) -> None:
         errors.append(f"feature_extraction.feature_dim must be {PAPER_FEATURE_DIM}")
     if int(features.get("motion_feature_dim", 0)) not in {0, 24}:
         errors.append("feature_extraction.motion_feature_dim must be 0 or 24 for the event feature export")
+    if int(config.get("model", {}).get("time_bias_version", 0)) != 2:
+        errors.append("model.time_bias_version must be 2")
     if str(flags.get("reasoner")) != "relation_temporal_graph_chain":
         errors.append("module_flags.reasoner must be relation_temporal_graph_chain")
     if str(flags.get("vlm_adapter")) != "structured_prompt":
@@ -54,8 +56,28 @@ def load_graph_reasoner_config(experiment_config: Path | None = None, overrides:
         raise ValueError(f"experiment configuration must be a mapping: {path}")
     for item in overrides or []:
         _apply_override(config, item)
+    config.setdefault("model", {}).setdefault("time_bias_version", 2)
     validate_paper_config(config)
     return config
+
+
+def resume_config_matches(saved: dict[str, Any], requested: dict[str, Any]) -> bool:
+    """Allow trainer resume across only the added time-bias version field."""
+    if not isinstance(saved, dict) or not isinstance(requested, dict):
+        return False
+
+    def without_time_bias_version(config: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(config)
+        model = dict(normalized.get("model") or {})
+        model.pop("time_bias_version", None)
+        normalized["model"] = model
+        return normalized
+
+    return without_time_bias_version(saved) == without_time_bias_version(requested)
+
+
+def saved_time_bias_version(state: dict[str, Any]) -> int:
+    return int(state.get("time_bias_version", (state.get("config") or {}).get("model", {}).get("time_bias_version", 1)))
 
 
 def resolve_paths_config(paths_config: Path | None = None) -> dict[str, Path]:

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from rallymotionreasoner.checkpoint_validation import validate_rgr_checkpoint
+from rallymotionreasoner.configs import saved_time_bias_version
 from rallymotionreasoner.data import GraphQADataset, collate, move_batch
 from rallymotionreasoner.data.graph_qa import safe_feature_name
 from rallymotionreasoner.event_detection.features import shot_feature_payload
@@ -53,6 +54,7 @@ class RGRCheckpointSelector:
             dropout=float(self.state.get("dropout", 0.1)),
         ).to(self.device)
         self.model.load_state_dict(self.state["model_state"], strict=True)
+        self.model.graph.set_time_bias_version(saved_time_bias_version(self.state))
         self.model.eval()
 
     def select(
@@ -62,7 +64,10 @@ class RGRCheckpointSelector:
         frame_features: Any,
         frame_indices: list[int],
     ) -> list[dict[str, Any]]:
-        strokes = graph.get("strokes") or []
+        max_strokes = int((self.state.get("config") or {}).get("data", {}).get("max_strokes", 32))
+        if max_strokes <= 0:
+            raise ValueError("RGR checkpoint max_strokes must be positive")
+        strokes = (graph.get("strokes") or [])[:max_strokes]
         if not strokes:
             return []
         expected_dim = int(self.state["visual_feature_dim"])
@@ -98,7 +103,7 @@ class RGRCheckpointSelector:
                 include_label_tokens=False,
                 use_edges=bool(cfg.get("data", {}).get("use_edges", True)),
                 require_visual_features=True,
-                max_strokes=len(strokes),
+                max_strokes=max_strokes,
                 max_question_tokens=int(cfg.get("data", {}).get("max_question_tokens", 64)),
                 max_node_tokens=int(cfg.get("data", {}).get("max_node_tokens", 24)),
             )

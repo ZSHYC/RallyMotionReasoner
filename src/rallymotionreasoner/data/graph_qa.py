@@ -412,17 +412,20 @@ class GraphQADataset(Dataset[EncodedItem]):
                         edge_index.append([sid_to_node[src_id], sid_to_node[dst_id]])
                         edge_type.append(EDGE_TYPE_TO_ID[relation])
             if graph_source == "motion_region":
+                fps = float(graph.get("fps") or 25.0)
+                frame_tolerance = max(0, round(evidence_frame_tolerance * fps / 25.0))
                 evidence_ids = match_gold_frames_to_predicted_shots(
-                    strokes, gold.get("evidence_frames"), tolerance=evidence_frame_tolerance
+                    strokes, gold.get("evidence_frames"), tolerance=frame_tolerance
                 )
                 key_ids = match_gold_frames_to_predicted_shots(
                     strokes,
                     row.get("key_action_frames", gold.get("key_action_frames")),
-                    tolerance=evidence_frame_tolerance,
+                    tolerance=frame_tolerance,
                 )
             else:
                 evidence_ids = valid_int_set(gold.get("evidence_shot_ids"), valid)
                 key_ids = valid_int_set(gold.get("key_action_shot_ids"), valid)
+            key_ids &= evidence_ids
             labels = {}
             for key, mapping in label_maps.items():
                 value = gold.get(key)

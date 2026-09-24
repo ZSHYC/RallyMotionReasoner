@@ -48,6 +48,7 @@ if nn is not None:
             )
             self.edge_bias = nn.Embedding(num_relations, num_heads)
             self.time_bias = nn.Embedding(17, num_heads)
+            self.zero_time_bucket = True
             self.attention = nn.MultiheadAttention(hidden_dim, num_heads, dropout=dropout, batch_first=True)
             self.norm1 = nn.LayerNorm(hidden_dim)
             self.norm2 = nn.LayerNorm(hidden_dim)
@@ -104,6 +105,8 @@ if nn is not None:
             gap = (delta.abs() * 8.0).long().clamp(max=7)
             signed = gap + 1
             signed = torch.where(delta < 0, -signed, signed)
+            if self.zero_time_bucket:
+                signed = torch.where(delta == 0, 0, signed)
             time_index = (signed + 8).clamp(0, 16)
             time_bias = self.time_bias(time_index).permute(0, 3, 1, 2)
             return (relation_bias + time_bias).reshape(batch_size * self.attention.num_heads, nodes, nodes)
@@ -143,6 +146,14 @@ if nn is not None:
             )
             self.pool_score = nn.Linear(hidden_dim, 1)
             self.pool = nn.Sequential(nn.LayerNorm(hidden_dim), nn.Linear(hidden_dim, hidden_dim), nn.Tanh())
+            self.time_bias_version = 2
+
+        def set_time_bias_version(self, version: int) -> None:
+            if version not in {1, 2}:
+                raise ValueError(f"unsupported RGR time bias version: {version}")
+            self.time_bias_version = version
+            for layer in self.layers:
+                layer.zero_time_bucket = version >= 2
 
         def forward(self, batch: TacticalGraphBatch) -> TacticalGraphOutput:
             tokens = batch.node_tokens

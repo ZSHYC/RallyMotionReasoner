@@ -49,6 +49,8 @@ The implementation is in `src/rallymotionreasoner/graph_reasoning/`. Event data 
 
 Ball-position and contact-time heads are optional auxiliary targets. They receive supervision only when `feature_extraction.visual_supervision_path` is configured; the default configuration does not provide that file. These target values are not fed into the RGR encoder.
 
+RGR uses the checkpoint's `max_strokes` limit in training and inference. Evidence-frame tolerance is calibrated at 25 FPS and scaled to each graph's FPS; key-action targets are restricted to evidence targets. The default `time_bias_version: 2` gives zero temporal distance its own attention bucket. Checkpoints without that field use version 1 timing.
+
 ## 4. Evidence routing and generation
 
 The evidence router ranks candidate strokes and key actions using the question representation and RGR state. Key-action scores combine evidence and conditional key probabilities. Candidates below the RGR evidence threshold are withheld from generation; when none qualify, the pipeline returns an unanswerable result. Otherwise, the generator receives validated candidate IDs, selected evidence frames, global context, and predicted event information. The frame budget keeps selected evidence centers, and Qwen receives their original frame indices and source FPS for timestamps. SFT rows need both `e2e_metadata.video_frame_indices` and `video_fps` to use source timing; older rows retain the utility's default timing. Output validation is defined in `src/rallymotionreasoner/schema.py`.

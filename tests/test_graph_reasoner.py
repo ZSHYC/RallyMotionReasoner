@@ -3,6 +3,7 @@ import torch
 from rallymotionreasoner.graph_reasoning.graph_transformer import EDGE_TYPE_TO_ID
 from rallymotionreasoner.graph_reasoning.model import RallyGraphReasoner
 from rallymotionreasoner.graph_reasoning.motion_adapter import TennisMotionAdapter
+from rallymotionreasoner.graph_reasoning.runtime import RGRCheckpointSelector
 
 
 def test_motion_adapter_padding_does_not_change_valid_nodes() -> None:
@@ -87,3 +88,37 @@ def test_rgr_forward_uses_paper_relations() -> None:
     assert output["key_action_logits"].shape == (1, 4)
     assert output["level_1_logits"].shape == (1, 2)
     assert torch.allclose(output["evidence_weights"].sum(dim=-1), torch.ones(1), atol=1e-5)
+
+
+def test_runtime_uses_checkpoint_training_stroke_limit() -> None:
+    selector = object.__new__(RGRCheckpointSelector)
+    selector.torch = torch
+    selector.device = torch.device("cpu")
+    selector.top_k = 8
+    selector.evidence_threshold = 0.5
+    selector.motion_feature_dim = 0
+    selector.state = {
+        "visual_feature_dim": 1,
+        "vocab": {"<pad>": 0, "<unk>": 1},
+        "label_maps": {},
+        "config": {"data": {"max_strokes": 2, "use_edges": True}},
+    }
+
+    class Model:
+        def __call__(self, batch):
+            shape = batch["node_mask"].shape
+            return {
+                "evidence_logits": torch.ones(shape),
+                "key_action_logits": torch.ones(shape),
+            }
+
+    selector.model = Model()
+    graph = {
+        "rally_id": "r",
+        "strokes": [{"shot_id": idx + 1, "frame": idx, "parsed": {}} for idx in range(3)],
+        "edges": [],
+    }
+
+    candidates = selector.select(graph, "why?", torch.zeros(3, 1), [0, 1, 2])
+
+    assert [item["shot_id"] for item in candidates] == [1, 2]
