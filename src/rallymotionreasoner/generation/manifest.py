@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from rallymotionreasoner.generation.qwen import QWEN_GENERATION_CONTRACT
 from rallymotionreasoner.schema import REQUIRED_SCHEMA
 from rallymotionreasoner.tracks import normalize_track
 
@@ -11,7 +12,9 @@ QWEN_ADAPTER_SCHEMA = "rallymotionreasoner.qwen_lora"
 MANIFEST_NAME = "rallymotionreasoner_manifest.json"
 
 
-def load_qwen_adapter_manifest(adapter: Path, *, expected_track: str | None = None) -> dict[str, Any]:
+def load_qwen_adapter_manifest(
+    adapter: Path, *, expected_track: str | None = None, expected_base_model: Path | None = None
+) -> dict[str, Any]:
     adapter = Path(adapter)
     path = adapter / MANIFEST_NAME
     if not path.is_file():
@@ -19,7 +22,17 @@ def load_qwen_adapter_manifest(adapter: Path, *, expected_track: str | None = No
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("schema") != QWEN_ADAPTER_SCHEMA:
         raise ValueError(f"unsupported Qwen adapter manifest schema: {payload.get('schema')}")
-    required = {"track", "dataset", "base_model", "output_schema_fields", "provenance_contract", "training_contract"}
+    if "generation_contract" not in payload:
+        raise ValueError("Qwen adapter manifest is missing the generation contract; retrain or re-export the adapter")
+    required = {
+        "track",
+        "dataset",
+        "base_model",
+        "output_schema_fields",
+        "provenance_contract",
+        "generation_contract",
+        "training_contract",
+    }
     missing = sorted(required - set(payload))
     if missing:
         raise ValueError(f"Qwen adapter manifest is missing fields: {missing}")
@@ -27,11 +40,15 @@ def load_qwen_adapter_manifest(adapter: Path, *, expected_track: str | None = No
         raise ValueError("Qwen adapter output schema fields do not match the runtime contract")
     if expected_track is not None and normalize_track(payload["track"]) != normalize_track(expected_track):
         raise ValueError(f"Qwen adapter track mismatch: {payload['track']} != {expected_track}")
+    if expected_base_model is not None and Path(payload["base_model"]).resolve() != Path(expected_base_model).resolve():
+        raise ValueError("Qwen adapter base model does not match the runtime model path")
     if not (adapter / "adapter_config.json").is_file():
         raise FileNotFoundError(f"adapter_config.json not found: {adapter}")
     normalize_track(payload["track"])
     if payload.get("provenance_contract") != "predicted_event+rgr_checkpoint":
         raise ValueError("Qwen adapter provenance contract does not match its training track")
+    if payload.get("generation_contract") != QWEN_GENERATION_CONTRACT:
+        raise ValueError("Qwen adapter generation contract is incompatible with this runtime")
     training_contract = payload.get("training_contract")
     required_training = {
         "epochs", "learning_rate", "gradient_accumulation_steps", "lora_rank", "lora_alpha",

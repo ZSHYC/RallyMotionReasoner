@@ -147,11 +147,12 @@ PYTHONPATH=src torchrun --nproc-per-node=8 scripts/train_qwen_lora.py \
   --model /path/to/Qwen3-VL-8B-Instruct \
   --train-data /path/to/train.jsonl \
   --val-data /path/to/val.jsonl \
+  --data-report /path/to/qwen_data_report.json \
   --output-dir runs/qwen_lora \
   --report outputs/qwen_lora.json
 ```
 
-Training requires locally prepared data and model weights.
+Training requires locally prepared data and model weights. Qwen SFT rows contain one frame-list video, a canonical predicted-candidate prompt, original video frame indices and FPS, and candidate centers included in those frames. The data report must cover both splits and declare the 32-frame sampling policy. Qwen adapters carry that prompt, sampling, and source-timing contract in their manifest.
 
 ## Repository layout
 

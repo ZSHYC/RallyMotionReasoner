@@ -18,7 +18,12 @@ from rallymotionreasoner.generation.manifest import (
     QWEN_ADAPTER_SCHEMA,
     load_qwen_adapter_manifest,
 )
-from rallymotionreasoner.generation.sft import prepare_qwen_sft_item, structured_video_messages
+from rallymotionreasoner.generation.qwen import QWEN_GENERATION_CONTRACT, QWEN_SAMPLING_CONTRACT
+from rallymotionreasoner.generation.sft import (
+    prepare_qwen_sft_item,
+    structured_video_messages,
+    validate_sft_generation_contract,
+)
 from rallymotionreasoner.io import read_json, read_jsonl, write_json
 from rallymotionreasoner.schema import REQUIRED_SCHEMA
 from rallymotionreasoner.tracks import TRACK_GRAPH_ASSISTED_PRED, normalize_track
@@ -52,6 +57,8 @@ def _validate_data_report(
     expected_track: str,
     train_data: Path,
     val_data: Path,
+    train_rows: int,
+    val_rows: int,
 ) -> dict[str, Any]:
     report = read_json(report_path)
     expected = {
@@ -61,23 +68,20 @@ def _validate_data_report(
         "media_mode": "videos",
         "gold_events_in_prompt": False,
         "candidate_fallback_used": False,
-        "sampling_contract": {
-            "max_frames": 32,
-            "global_frames": 32,
-            "local_frames": 4,
-            "local_radius": 8,
-            "top_k": 8,
-            "candidate_frame_nms_radius": 8,
-        },
+        "sampling_contract": QWEN_SAMPLING_CONTRACT,
     }
     mismatched = {key: (report.get(key), value) for key, value in expected.items() if report.get(key) != value}
     if mismatched:
         raise ValueError(f"Qwen data-report contract mismatch: {mismatched}")
-    for split, data in (("train", train_data), ("val", val_data)):
+    for split, data, expected_rows in (
+        ("train", train_data, train_rows),
+        ("val", val_data, val_rows),
+    ):
         row = (report.get("splits") or {}).get(split) or {}
         if (
             int(row.get("references") or -1) != int(row.get("sft_rows") or -2)
             or int(row.get("prompts") or -1) != int(row.get("sft_rows") or -2)
+            or int(row.get("sft_rows") or -1) != expected_rows
             or int(row.get("missing_media") or 0) != 0
             or int(row.get("leakage") or 0) != 0
             or int(row.get("empty_candidates") or 0) != 0
@@ -104,6 +108,7 @@ def _validate_rows(
             raise ValueError(f"Qwen {label} split has empty or duplicate qa_id: {qa_id}")
         ids.add(qa_id)
         structured_video_messages(row, include_answer=True)
+        validate_sft_generation_contract(row)
         actual_track = normalize_track((row.get("e2e_metadata") or {}).get("track"))
         if actual_track != expected_track:
             raise ValueError(f"Qwen {label} row track mismatch for {qa_id}: {actual_track} != {expected_track}")
@@ -240,7 +245,7 @@ def main() -> int:
     parser.add_argument("--val-data", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--data-report", type=Path)
+    parser.add_argument("--data-report", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
@@ -255,27 +260,30 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    for label, path in (("model", args.model), ("train", args.train_data), ("val", args.val_data)):
+    for label, path in (
+        ("model", args.model),
+        ("train", args.train_data),
+        ("val", args.val_data),
+        ("data report", args.data_report),
+    ):
         if not path.exists():
             raise FileNotFoundError(f"missing Qwen {label}: {path}")
     train_rows = read_jsonl(args.train_data)
     val_rows = read_jsonl(args.val_data)
+    track = TRACK_GRAPH_ASSISTED_PRED
+    launch_rank = int(os.environ.get("RANK", "0"))
+    _validate_data_report(
+        args.data_report,
+        expected_track=track,
+        train_data=args.train_data,
+        val_data=args.val_data,
+        train_rows=len(train_rows),
+        val_rows=len(val_rows),
+    )
     if args.max_train_rows:
         train_rows = train_rows[: args.max_train_rows]
     if args.max_val_rows:
         val_rows = val_rows[: args.max_val_rows]
-    track = TRACK_GRAPH_ASSISTED_PRED
-    launch_rank = int(os.environ.get("RANK", "0"))
-    data_report = (
-        _validate_data_report(
-            args.data_report,
-            expected_track=track,
-            train_data=args.train_data,
-            val_data=args.val_data,
-        )
-        if args.data_report
-        else None
-    )
     # Validate media paths once on rank 0 to avoid redundant distributed I/O.
     train_ids = _validate_rows(
         train_rows,
@@ -300,7 +308,7 @@ def main() -> int:
         "track": track,
         "train_rows": len(train_rows),
         "val_rows": len(val_rows),
-        "data_report": str(args.data_report) if data_report else None,
+        "data_report": str(args.data_report),
         "distributed_backend": "torch_ddp",
         "gold_events_allowed": False,
     }
@@ -339,6 +347,7 @@ def main() -> int:
         load_qwen_adapter_manifest(
             resume_checkpoint,
             expected_track=track,
+            expected_base_model=args.model,
         )
 
     processor = AutoProcessor.from_pretrained(str(args.model), local_files_only=True, trust_remote_code=True)
@@ -418,7 +427,7 @@ def main() -> int:
         "schema": QWEN_ADAPTER_SCHEMA,
         "track": track,
         "dataset": "trace",
-        "base_model": str(args.model),
+        "base_model": str(args.model.resolve()),
         "train_data": str(args.train_data),
         "val_data": str(args.val_data),
         "output_schema_fields": REQUIRED_SCHEMA,
@@ -426,6 +435,7 @@ def main() -> int:
         "trainer": "native_torch_ddp_peft",
         "world_size": world_size,
         "provenance_contract": "predicted_event+rgr_checkpoint",
+        "generation_contract": QWEN_GENERATION_CONTRACT,
         "training_contract": {
             "epochs": args.epochs,
             "learning_rate": args.learning_rate,

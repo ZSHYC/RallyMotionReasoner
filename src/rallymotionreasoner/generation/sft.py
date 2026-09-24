@@ -3,19 +3,65 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from rallymotionreasoner.generation.qwen import _prepare_qwen3_vision_inputs
+from rallymotionreasoner.generation.qwen import (
+    QWEN_CANDIDATES_MARKER,
+    QWEN_PROMPT_HEADER,
+    QWEN_SAMPLING_CONTRACT,
+    _prepare_qwen3_vision_inputs,
+    _validate_video_timing,
+    qwen_prompt,
+)
 from rallymotionreasoner.schema import OPTIONAL_SCHEMA, REQUIRED_SCHEMA, validate_prediction_payload
 
 
-def _sft_video_timing(row: dict[str, Any]) -> tuple[list[int] | None, float | None]:
+def _sft_video_timing(
+    row: dict[str, Any], *, frame_count: int | None = None, required: bool = False
+) -> tuple[list[int] | None, float | None]:
     metadata = row.get("e2e_metadata") or {}
     frame_indices = metadata.get("video_frame_indices")
     fps = metadata.get("video_fps")
-    if frame_indices is None and fps is None:
-        return None, None
-    if frame_indices is None or fps is None:
-        raise ValueError("e2e_metadata.video_frame_indices and video_fps must be provided together")
-    return frame_indices, fps
+    try:
+        return _validate_video_timing(frame_count or len(frame_indices or []), frame_indices, fps, required=required)
+    except ValueError as exc:
+        raise ValueError(f"e2e_metadata.video_frame_indices and video_fps: {exc}") from exc
+
+
+def validate_sft_generation_contract(row: dict[str, Any]) -> None:
+    messages = structured_video_messages(row, include_answer=False)
+    frames = row["videos"][0]
+    if len(frames) > QWEN_SAMPLING_CONTRACT["max_frames"]:
+        raise ValueError(
+            f"Qwen SFT row exceeds the {QWEN_SAMPLING_CONTRACT['max_frames']}-frame contract: {row.get('qa_id')}"
+        )
+    frame_indices, _ = _sft_video_timing(row, frame_count=len(frames), required=True)
+    user = str(messages[-1]["content"][-1]["text"])
+    if not user.startswith(QWEN_PROMPT_HEADER) or QWEN_CANDIDATES_MARKER not in user:
+        raise ValueError(f"Qwen SFT prompt contract mismatch: {row.get('qa_id')}")
+    question, _, tail = user[len(QWEN_PROMPT_HEADER) :].partition(QWEN_CANDIDATES_MARKER)
+    candidate_json, separator, _ = tail.partition("\nReturn exactly one JSON object")
+    try:
+        candidates = json.loads(candidate_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Qwen SFT prompt contract mismatch: {row.get('qa_id')}") from exc
+    valid_candidates = (
+        isinstance(candidates, list)
+        and candidates
+        and all(
+            isinstance(candidate, dict)
+            and isinstance(candidate.get("frame"), int)
+            and not isinstance(candidate.get("frame"), bool)
+            for candidate in candidates
+        )
+    )
+    try:
+        canonical = qwen_prompt(question, candidates) if valid_candidates else None
+    except ValueError:
+        canonical = None
+    if not separator or canonical is None or user != canonical:
+        raise ValueError(f"Qwen SFT prompt contract mismatch: {row.get('qa_id')}")
+    sampled_frames = set(frame_indices or [])
+    if any(int(candidate["frame"]) not in sampled_frames for candidate in candidates):
+        raise ValueError(f"Qwen SFT candidate frames must occur in video_frame_indices: {row.get('qa_id')}")
 
 
 def structured_video_messages(row: dict[str, Any], *, include_answer: bool) -> list[dict[str, Any]]:
@@ -66,7 +112,7 @@ def prepare_qwen_sft_item(processor: Any, row: dict[str, Any], device: Any) -> d
     prompt_messages = structured_video_messages(row, include_answer=False)
     full_text = processor.apply_chat_template(full_messages, tokenize=False, add_generation_prompt=False)
     prompt_text = processor.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)
-    frame_indices, fps = _sft_video_timing(row)
+    frame_indices, fps = _sft_video_timing(row, frame_count=len(row["videos"][0]))
     processor_kwargs = _prepare_qwen3_vision_inputs(
         full_messages,
         frame_count=len(row["videos"][0]),

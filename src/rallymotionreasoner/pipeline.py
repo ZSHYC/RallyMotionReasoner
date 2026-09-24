@@ -5,6 +5,7 @@ from typing import Any
 
 from rallymotionreasoner.event_detection.graph import build_predicted_graph
 from rallymotionreasoner.features.ball_trajectory import load_track_payload
+from rallymotionreasoner.generation.qwen import QWEN_SAMPLING_CONTRACT, _ground_qwen_evidence
 from rallymotionreasoner.media import materialize_video
 from rallymotionreasoner.video import local_indices, uniform_indices
 
@@ -15,9 +16,9 @@ def select_frame_indices(
     num_frames: int,
     candidates: list[dict[str, Any]],
     *,
-    max_global_frames: int,
-    local_frames_per_candidate: int,
-    max_frames: int = 32,
+    max_global_frames: int = QWEN_SAMPLING_CONTRACT["global_frames"],
+    local_frames_per_candidate: int = QWEN_SAMPLING_CONTRACT["local_frames"],
+    max_frames: int = QWEN_SAMPLING_CONTRACT["max_frames"],
 ) -> list[int]:
     """Keep every evidence center, then global context and local detail within the video budget."""
     if num_frames <= 0 or max_frames <= 0:
@@ -25,11 +26,21 @@ def select_frame_indices(
     centers = [max(0, min(num_frames - 1, int(item["frame"]))) for item in candidates]
     selected = set(centers[:max_frames])
     selected.update(uniform_indices(num_frames, min(max_global_frames, max_frames - len(selected))))
-    for center in centers:
-        for index in local_indices(center, num_frames, radius=8, k=local_frames_per_candidate):
+    local = [
+        local_indices(
+            center,
+            num_frames,
+            radius=QWEN_SAMPLING_CONTRACT["local_radius"],
+            k=local_frames_per_candidate,
+        )
+        for center in centers
+    ]
+    for offset in range(local_frames_per_candidate):
+        for indices in local:
             if len(selected) >= max_frames:
                 return sorted(selected)
-            selected.add(index)
+            if offset < len(indices):
+                selected.add(indices[offset])
     return sorted(selected)
 
 
@@ -72,8 +83,6 @@ class RallyMotionReasoner:
         question: str,
         *,
         fps: float | None = None,
-        max_global_frames: int = 16,
-        local_frames_per_candidate: int = 3,
         ball_track: str | Path | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not str(question).strip():
@@ -100,16 +109,12 @@ class RallyMotionReasoner:
                 raise RuntimeError("RGR produced no evidence candidates")
             candidates = [candidate for candidate in candidates if candidate["selected"]]
             if candidates:
-                frame_selection = select_frame_indices(
-                    len(media.frame_paths),
-                    candidates,
-                    max_global_frames=max_global_frames,
-                    local_frames_per_candidate=local_frames_per_candidate,
-                )
+                frame_selection = select_frame_indices(len(media.frame_paths), candidates)
                 selected_frames = [media.frame_paths[index] for index in frame_selection]
                 answer = self.qwen.generate(
                     selected_frames, question, candidates, frame_indices=frame_selection, fps=media.fps
                 )
+                answer = _ground_qwen_evidence(answer, candidates)
             else:
                 answer = {
                     "answer": "",
@@ -131,7 +136,8 @@ class RallyMotionReasoner:
                         "end_sec": round(min(len(media.frame_paths) - 1, frame + 4) / media.fps, 4),
                     }
                 )
-            degraded = bool(answer.get("parse_error"))
+            degraded_reason = answer.get("parse_error") or answer.get("generation_error")
+            degraded = bool(degraded_reason)
             evidence_shot_ids = [int(item["shot_id"]) for item in evidence]
             key_action_shot_ids = [int(sid) for sid in answer.get("key_action_shot_ids", []) if int(sid) in evidence_shot_ids]
             return {
@@ -153,8 +159,8 @@ class RallyMotionReasoner:
                 "provenance": {
                     "mode": "predicted",
                     "degraded": degraded,
-                    "degraded_reason": answer.get("parse_error"),
-                    "abstention_reason": "low_evidence" if not candidates else None,
+                    "degraded_reason": degraded_reason,
+                    "abstention_reason": "low_evidence" if not candidates else answer.get("generation_error"),
                     "graph_source": graph_source,
                     "event_feature_backend": runtime.feature_provenance.backend,
                     "event_detector_backend": self.event.backend,
