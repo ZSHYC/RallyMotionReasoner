@@ -23,7 +23,7 @@ The event detector combines two expert streams.
 
 `src/rallymotionreasoner/event_detection/features.py` extracts DINOv3 features for the full frame and four corner crops. The visual expert encodes global court context and local player regions without adding a separate event model.
 
-### Cross-stream fusion
+### Event score fusion
 
 `src/rallymotionreasoner/event_detection/model.py` defines a joint `MotionRegionEventModel` with bidirectional cross-attention and optional attribute heads. It has no checkpointed training or inference path in this repository. The current runtime evaluates `TrajectoryExpert` and `VisualExpert` independently and averages their eventness/type scores. Its decoded hitter and technique attributes remain unknown.
 
@@ -55,7 +55,7 @@ The evidence router ranks candidate strokes and key actions using the question r
 
 ## 5. Data and checkpoints
 
-The repository keeps checkpoint and data validation structural: required files, dimensions, label maps, vocabulary, and schemas are checked directly. It does not compute artifact hashes, fingerprints, or checksums.
+Checkpoint and data validation checks required files, dimensions, label maps, vocabulary, and schemas.
 
 External artifacts are intentionally separate:
 

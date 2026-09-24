@@ -25,8 +25,7 @@ The runtime loads `trajectory_expert.pt` and `visual_expert.pt` from one expert 
 
 Hit events become stroke nodes. Bounce events provide timing context such as the gap before or after a stroke. RGR receives:
 
-- 800-dimensional frame descriptors;
-- 24-dimensional motion statistics derived from those descriptors;
+- 800-dimensional frame descriptors that include 24-dimensional motion statistics;
 - shot timing and event attributes when available;
 - temporal relations between neighboring strokes;
 - same-player relations where the hitter is known (the current event runtime does not supply hitter labels);
@@ -72,7 +71,7 @@ region-experts/
 └── visual_expert.pt
 ```
 
-The video, trajectory, DINOv3 repository/weights, RGR checkpoint, and optional Qwen model are supplied independently. No hash, fingerprint, or artifact digest is required.
+The video, trajectory, DINOv3 repository/weights, RGR checkpoint, and Qwen model are supplied independently.
 
 ## Commands
 
@@ -134,7 +133,7 @@ rallymotionreasoner predict \
   --output outputs/answer.json
 ```
 
-The Qwen model and adapter are optional at the code level; omit them when only structured event and RGR outputs are needed.
+The full pipeline requires a Qwen model, supplied through `--qwen-model` or `qwen3_vl_model` in the paths configuration. The Qwen adapter is optional. Use `predict-events` for event-only output.
 
 ### Train downstream components
 
@@ -152,7 +151,7 @@ PYTHONPATH=src torchrun --nproc-per-node=8 scripts/train_qwen_lora.py \
   --report outputs/qwen_lora.json
 ```
 
-These commands describe available interfaces only. No training or numerical reproduction is part of this repository update.
+Training requires locally prepared data and model weights.
 
 ## Repository layout
 
