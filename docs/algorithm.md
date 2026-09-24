@@ -17,7 +17,7 @@ The event detector combines two expert streams.
 
 ### TrajectoryExpert
 
-`src/rallymotionreasoner/features/ball_trajectory.py` accepts TrackNet JSON or CSV and normalizes it into fixed temporal rows. Each row contains ball position, motion derivatives, visibility, and a validity indicator. The trajectory encoder models short-term movement and preserves the distinction between a valid temporal slot and a visible ball observation.
+`src/rallymotionreasoner/features/ball_trajectory.py` accepts TrackNet JSON or CSV and normalizes it into fixed temporal rows. Each row contains ball position, motion derivatives, visibility, and a validity indicator. The trajectory encoder models short-term movement and preserves the distinction between a valid temporal slot and a visible ball observation. Its released expert weights retain a 779-column projection, with the first 11 columns used for the 11 trajectory inputs.
 
 ### VisualExpert
 

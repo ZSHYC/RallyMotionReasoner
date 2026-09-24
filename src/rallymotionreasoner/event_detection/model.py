@@ -60,6 +60,7 @@ if nn is not None:
 
         def __init__(self) -> None:
             super().__init__()
+            # The released expert keeps 779 projection weights; only 11 trajectory inputs are active.
             self.proj = nn.Linear(779, 64)
             self.input_norm = nn.LayerNorm(64)
             self.input_dropout = nn.Dropout(0.25)
