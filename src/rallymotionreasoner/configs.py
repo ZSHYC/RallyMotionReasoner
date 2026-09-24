@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from .config import DEFAULT_CONFIG, load_paths
+from .generation.qwen import QWEN_SAMPLING_CONTRACT
 
 PAPER_FEATURE_DIM = 800
 
@@ -35,6 +36,8 @@ def validate_paper_config(config: dict[str, Any]) -> None:
         errors.append("data.include_label_tokens must be false")
     if not bool(data.get("use_edges", False)):
         errors.append("data.use_edges must be true")
+    if not 1 <= int(data.get("top_k", 8)) <= QWEN_SAMPLING_CONTRACT["max_frames"]:
+        errors.append(f"data.top_k must be between 1 and {QWEN_SAMPLING_CONTRACT['max_frames']}")
     if int(features.get("feature_dim", 0)) != PAPER_FEATURE_DIM:
         errors.append(f"feature_extraction.feature_dim must be {PAPER_FEATURE_DIM}")
     if int(features.get("motion_feature_dim", 0)) not in {0, 24}:
@@ -56,13 +59,14 @@ def load_graph_reasoner_config(experiment_config: Path | None = None, overrides:
         raise ValueError(f"experiment configuration must be a mapping: {path}")
     for item in overrides or []:
         _apply_override(config, item)
+    config.setdefault("data", {}).setdefault("top_k", 8)
     config.setdefault("model", {}).setdefault("time_bias_version", 2)
     validate_paper_config(config)
     return config
 
 
 def resume_config_matches(saved: dict[str, Any], requested: dict[str, Any]) -> bool:
-    """Allow trainer resume across only the added time-bias version field."""
+    """Normalize legacy defaults without allowing a changed training contract."""
     if not isinstance(saved, dict) or not isinstance(requested, dict):
         return False
 
@@ -71,6 +75,9 @@ def resume_config_matches(saved: dict[str, Any], requested: dict[str, Any]) -> b
         model = dict(normalized.get("model") or {})
         model.pop("time_bias_version", None)
         normalized["model"] = model
+        data = dict(normalized.get("data") or {})
+        data.setdefault("top_k", 8)
+        normalized["data"] = data
         return normalized
 
     return without_time_bias_version(saved) == without_time_bias_version(requested)

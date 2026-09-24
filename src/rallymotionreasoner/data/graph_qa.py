@@ -73,8 +73,10 @@ def visual_supervision_file(paths: dict[str, Path], cfg: dict[str, Any], split: 
 
 
 def read_visual_supervision(path: Path | None) -> dict[str, dict[int, dict[str, Any]]]:
-    if path is None or not path.exists():
+    if path is None:
         return {}
+    if not path.exists():
+        raise FileNotFoundError(f"visual supervision file does not exist: {path}")
     rows: dict[str, dict[int, dict[str, Any]]] = {}
     for row in read_jsonl(path):
         shots: dict[int, dict[str, Any]] = {}
@@ -216,6 +218,7 @@ def load_visual_features(
     shot_ids: list[int],
     feature_dim: int,
     *,
+    shot_frames: dict[int, int] | None = None,
     strict: bool = False,
 ) -> list[list[float]]:
     zeros = [[0.0] * feature_dim for _ in shot_ids]
@@ -244,6 +247,7 @@ def load_visual_features(
             raise ValueError(f"visual feature provenance contract mismatch: {path}")
     tensor = data.get("shot_features")
     cached_ids = data.get("shot_ids") or []
+    cached_frames = data.get("shot_frames") or []
     if tensor is None:
         if strict:
             raise ValueError(f"visual feature file has no shot_features: {path}")
@@ -259,6 +263,15 @@ def load_visual_features(
     missing_ids = [int(sid) for sid in shot_ids if int(sid) not in by_id]
     if strict and missing_ids:
         raise ValueError(f"visual feature cache {path} is missing shot ids: {missing_ids}")
+    if strict and shot_frames is not None:
+        cached_frame_by_id = {int(sid): int(frame) for sid, frame in zip(cached_ids, cached_frames)}
+        stale_ids = [
+            int(sid)
+            for sid in shot_ids
+            if cached_frame_by_id.get(int(sid)) != shot_frames.get(int(sid))
+        ]
+        if stale_ids:
+            raise ValueError(f"visual feature cache {path} has stale shot frames for ids: {stale_ids}")
     return [by_id.get(int(sid), [0.0] * feature_dim)[:feature_dim] for sid in shot_ids]
 
 
@@ -304,6 +317,7 @@ class EncodedItem:
     ball_xy: list[list[float]]
     ball_mask: list[float]
     ball_visible: list[float]
+    ball_visible_mask: list[float]
     contact_frame: list[float]
     contact_mask: list[float]
     frame_scale: float
@@ -368,6 +382,7 @@ class GraphQADataset(Dataset[EncodedItem]):
             ball_xy: list[list[float]] = []
             ball_mask: list[float] = []
             ball_visible: list[float] = []
+            ball_visible_mask: list[float] = []
             contact_frame: list[float] = []
             contact_mask: list[float] = []
             for sid in shot_ids:
@@ -382,10 +397,13 @@ class GraphQADataset(Dataset[EncodedItem]):
                 else:
                     ball_xy.append([0.0, 0.0])
                     ball_mask.append(0.0)
+                visible = ball.get("visible")
                 confidence = ball.get("confidence")
-                if confidence is None:
-                    confidence = 1.0 if ball.get("visible") else 0.0
-                ball_visible.append(max(0.0, min(1.0, float(confidence))))
+                visibility_target = (1.0 if visible else 0.0) if visible is not None else confidence or 0.0
+                ball_visible.append(max(0.0, min(1.0, float(visibility_target))))
+                ball_visible_mask.append(
+                    1.0 if ball.get("visible") is not None or ball.get("confidence") is not None else 0.0
+                )
                 contact = sup.get("contact") or {}
                 contact_value = contact.get("frame")
                 if contact_value is not None and max_frame > 0:
@@ -429,7 +447,10 @@ class GraphQADataset(Dataset[EncodedItem]):
             labels = {}
             for key, mapping in label_maps.items():
                 value = gold.get(key)
-                labels[key] = mapping.get(str(value) if value is not None else NULL_LABEL, mapping.get(NULL_LABEL, 0))
+                label = str(value) if value is not None else NULL_LABEL
+                if key in {"level_1", "level_2", "level_3"} and value not in {None, ""} and label not in mapping:
+                    raise ValueError(f"{split} {key} label {label!r} is absent from the training label map")
+                labels[key] = mapping.get(label, mapping.get(NULL_LABEL, 0))
             self.items.append(
                 EncodedItem(
                     qa_id=str(row["qa_id"]),
@@ -443,12 +464,14 @@ class GraphQADataset(Dataset[EncodedItem]):
                         rally_id,
                         shot_ids,
                         visual_feature_dim,
+                        shot_frames=frame_by_shot,
                         strict=require_visual_features,
                     ),
                     motion_features=load_motion_features(feature_root, split, rally_id, shot_ids, motion_feature_dim),
                     ball_xy=ball_xy,
                     ball_mask=ball_mask,
                     ball_visible=ball_visible,
+                    ball_visible_mask=ball_visible_mask,
                     contact_frame=contact_frame,
                     contact_mask=contact_mask,
                     frame_scale=float(max_frame),
@@ -486,6 +509,7 @@ def collate(items: list[EncodedItem]) -> dict[str, Any]:
     ball_xy = torch.zeros(batch, max_nodes, 2, dtype=torch.float32)
     ball_mask = torch.zeros(batch, max_nodes, dtype=torch.float32)
     ball_visible = torch.zeros(batch, max_nodes, dtype=torch.float32)
+    ball_visible_mask = torch.zeros(batch, max_nodes, dtype=torch.float32)
     contact_frame = torch.zeros(batch, max_nodes, dtype=torch.float32)
     contact_mask = torch.zeros(batch, max_nodes, dtype=torch.float32)
     frame_scale = torch.ones(batch, dtype=torch.float32)
@@ -508,6 +532,7 @@ def collate(items: list[EncodedItem]) -> dict[str, Any]:
         ball_xy[b, :n] = torch.tensor(item.ball_xy, dtype=torch.float32)
         ball_mask[b, :n] = torch.tensor(item.ball_mask, dtype=torch.float32)
         ball_visible[b, :n] = torch.tensor(item.ball_visible, dtype=torch.float32)
+        ball_visible_mask[b, :n] = torch.tensor(item.ball_visible_mask, dtype=torch.float32)
         contact_frame[b, :n] = torch.tensor(item.contact_frame, dtype=torch.float32)
         contact_mask[b, :n] = torch.tensor(item.contact_mask, dtype=torch.float32)
         frame_scale[b] = float(item.frame_scale)
@@ -530,6 +555,7 @@ def collate(items: list[EncodedItem]) -> dict[str, Any]:
         "ball_xy": ball_xy,
         "ball_mask": ball_mask,
         "ball_visible": ball_visible,
+        "ball_visible_mask": ball_visible_mask,
         "contact_frame": contact_frame,
         "contact_mask": contact_mask,
         "frame_scale": frame_scale,

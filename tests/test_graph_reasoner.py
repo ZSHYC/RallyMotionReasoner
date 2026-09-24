@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import pytest
 import torch
 
 from rallymotionreasoner.graph_reasoning.graph_transformer import EDGE_TYPE_TO_ID
@@ -122,3 +125,49 @@ def test_runtime_uses_checkpoint_training_stroke_limit() -> None:
     candidates = selector.select(graph, "why?", torch.zeros(3, 1), [0, 1, 2])
 
     assert [item["shot_id"] for item in candidates] == [1, 2]
+
+
+@pytest.mark.parametrize(("checkpoint_top_k", "expected"), [(None, 8), (3, 3)])
+def test_runtime_uses_checkpoint_top_k_with_legacy_default(
+    tmp_path: Path, checkpoint_top_k: int | None, expected: int
+) -> None:
+    label_maps = {"level_1": {"null": 0}}
+    model = RallyGraphReasoner(
+        vocab_size=2,
+        label_maps=label_maps,
+        visual_feature_dim=1,
+        hidden_dim=4,
+        num_layers=1,
+        num_heads=1,
+        dropout=0.0,
+    )
+    state = {
+        "schema": "rallymotionreasoner.rgr.v1",
+        "model_state": model.state_dict(),
+        "vocab": {"<pad>": 0, "<unk>": 1},
+        "label_maps": label_maps,
+        "config": {"data": {"graph_source": "motion_region", "include_label_tokens": False}},
+        "thresholds": {"evidence_threshold": 0.5},
+        "event_backend": "motion_region",
+        "graph_source": "motion_region",
+        "visual_feature_dim": 1,
+        "hidden_dim": 4,
+        "num_layers": 1,
+        "num_heads": 1,
+        "dropout": 0.0,
+    }
+    if checkpoint_top_k is not None:
+        state["top_k"] = checkpoint_top_k
+    checkpoint = tmp_path / "checkpoint.pt"
+    torch.save(state, checkpoint)
+
+    selector = RGRCheckpointSelector(checkpoint, device="cpu")
+
+    assert selector.top_k == expected
+    with pytest.raises(ValueError, match="top_k override"):
+        RGRCheckpointSelector(checkpoint, device="cpu", top_k=expected + 1)
+    if checkpoint_top_k == 3:
+        state["top_k"] = 33
+        torch.save(state, checkpoint)
+        with pytest.raises(ValueError, match="RGR top_k must be between 1 and 32"):
+            RGRCheckpointSelector(checkpoint, device="cpu")

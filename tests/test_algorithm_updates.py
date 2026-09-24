@@ -1,9 +1,17 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
-from rallymotionreasoner.data.graph_qa import GraphQADataset, collate, match_gold_frames_to_predicted_shots, tokenize
+from rallymotionreasoner.data.graph_qa import (
+    GraphQADataset,
+    collate,
+    load_visual_features,
+    match_gold_frames_to_predicted_shots,
+    read_visual_supervision,
+    tokenize,
+)
 from rallymotionreasoner.evaluation.event_metrics import one_to_one_match
 from rallymotionreasoner.event_detection.decoder import DecodedEvent
 from rallymotionreasoner.event_detection.features import ball_frame_features
@@ -65,6 +73,138 @@ def test_evaluation_allows_empty_evidence_prediction_below_threshold() -> None:
         LowConfidenceModel(), [collate([item])], torch.device("cpu"), evidence_threshold=0.45
     )
     assert metrics["evidence_f1"] == 1.0
+    assert metrics["key_action_accuracy"] == 1.0
+    assert metrics["key_action_f1"] == 1.0
+
+
+def test_evaluation_applies_online_top_k_before_threshold() -> None:
+    item = GraphQADataset(
+        [{
+            "qa_id": "q",
+            "rally_id": "r",
+            "question": "why?",
+            "gold_answer": {"evidence_shot_ids": [1], "key_action_shot_ids": [1]},
+        }],
+        {"r": {"strokes": [{"shot_id": 1, "frame": 10}, {"shot_id": 2, "frame": 20}], "edges": []}},
+        {"<unk>": 1},
+        {name: {"null": 0} for name in ("level_1", "level_2", "level_3")},
+        split="val",
+        visual_feature_dim=1,
+        include_label_tokens=False,
+        require_visual_features=False,
+        graph_source="gold",
+    )[0]
+
+    class RankedModel(torch.nn.Module):
+        def forward(self, batch):
+            shape = batch["node_mask"].shape
+            return {
+                "evidence_logits": torch.tensor([[3.0, 2.0]]),
+                "key_action_logits": torch.tensor([[3.0, 2.0]]),
+                **{f"{name}_logits": torch.zeros(shape[0], 1) for name in ("level_1", "level_2", "level_3")},
+            }
+
+    metrics = evaluate_internal(
+        RankedModel(),
+        [collate([item])],
+        torch.device("cpu"),
+        evidence_threshold=0.5,
+        top_k=1,
+    )
+    assert metrics["evidence_f1"] == 1.0
+    assert metrics["key_action_f1"] == 1.0
+
+    thresholded = evaluate_internal(
+        RankedModel(),
+        [collate([item])],
+        torch.device("cpu"),
+        evidence_threshold=0.95,
+        top_k=2,
+    )
+    assert thresholded["evidence_f1"] == 1.0
+    assert thresholded["key_action_f1"] == 1.0
+
+
+@pytest.mark.parametrize(("level", "value"), [("level_1", "F"), ("level_2", "A1"), ("level_3", "unknown")])
+def test_validation_rejects_unseen_nonempty_hierarchical_label(level: str, value: str) -> None:
+    with pytest.raises(ValueError, match=f"{level}.*{value}"):
+        GraphQADataset(
+            [{
+                "qa_id": "q",
+                "rally_id": "r",
+                "question": "why?",
+                "gold_answer": {level: value},
+            }],
+            {"r": {"strokes": [{"shot_id": 1, "frame": 10}], "edges": []}},
+            {"<unk>": 1},
+            {level: {"null": 0}},
+            split="val",
+            visual_feature_dim=1,
+            include_label_tokens=False,
+            require_visual_features=False,
+        )
+
+
+def test_strict_visual_cache_rejects_stale_shot_frames(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "train"
+    cache_dir.mkdir()
+    torch.save(
+        {
+            "schema": "rallymotionreasoner.rgr_event_features",
+            "source": "motion_region_predicted",
+            "rally_id": "r",
+            "split": "train",
+            "shot_ids": [1],
+            "shot_frames": [20],
+            "shot_features": torch.zeros(1, 2),
+        },
+        cache_dir / "r.pt",
+    )
+
+    with pytest.raises(ValueError, match="shot frame"):
+        load_visual_features(
+            tmp_path,
+            "train",
+            "r",
+            [1],
+            2,
+            shot_frames={1: 21},
+            strict=True,
+        )
+
+
+def test_configured_visual_supervision_must_exist(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="visual supervision"):
+        read_visual_supervision(tmp_path / "missing.jsonl")
+
+
+def test_invisible_ball_keeps_visibility_supervision_mask() -> None:
+    item = GraphQADataset(
+        [{"qa_id": "q", "rally_id": "r", "question": "why?", "gold_answer": {}}],
+        {"r": {"strokes": [{"shot_id": 1, "frame": 10}], "edges": []}},
+        {"<unk>": 1},
+        {},
+        split="train",
+        visual_supervision={"r": {1: {"ball": {"visible": False, "confidence": 0.9}}}},
+        visual_feature_dim=1,
+        include_label_tokens=False,
+        require_visual_features=False,
+    )[0]
+
+    batch = collate([item])
+    assert batch["ball_mask"].tolist() == [[0.0]]
+    assert batch["ball_visible"].tolist() == [[0.0]]
+    assert batch["ball_visible_mask"].tolist() == [[1.0]]
+
+    outputs = {
+        "evidence_logits": torch.zeros(1, 1),
+        "key_action_logits": torch.zeros(1, 1),
+        "ball_visible_logits": torch.tensor([[10.0]]),
+    }
+    wrong = compute_loss(outputs, batch, {"ball_visible": 1.0})
+    outputs["ball_visible_logits"] = torch.tensor([[-10.0]])
+    correct = compute_loss(outputs, batch, {"ball_visible": 1.0})
+    assert correct < wrong
 
 
 def test_zero_time_delta_uses_dedicated_bucket_with_legacy_compatibility() -> None:
@@ -177,6 +317,7 @@ def test_rgr_auxiliary_loss_and_multilabel_key_metric_are_finite() -> None:
         "ball_xy": torch.full((1, 2, 2), 0.5),
         "ball_mask": torch.ones(1, 2),
         "ball_visible": torch.ones(1, 2),
+        "ball_visible_mask": torch.ones(1, 2),
         "contact_frame": torch.full((1, 2), 0.5),
         "contact_mask": torch.ones(1, 2),
         "labels": {"level_1": torch.zeros(1, dtype=torch.long)},

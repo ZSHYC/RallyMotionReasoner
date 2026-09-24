@@ -82,6 +82,7 @@ def main() -> int:
     paths = resolve_paths_config(args.config)
     feature_root = graph_reasoner_feature_root(paths, cfg)
     training_cfg = cfg.get("training", {})
+    top_k = int(cfg["data"]["top_k"])
     seed = int(cfg.get("seed", 42))
     random.seed(seed)
     torch.manual_seed(seed)
@@ -222,7 +223,7 @@ def main() -> int:
             seen += len(batch["items"])
         if not epoch_complete:
             break
-        metrics = evaluate_internal(model, val_loader, device, loss_weights=loss_weights)
+        metrics = evaluate_internal(model, val_loader, device, top_k=top_k, loss_weights=loss_weights)
         metrics["epoch"] = epoch
         metrics["train_loss"] = train_loss / seen if seen else 0.0
         history.append(metrics)
@@ -275,11 +276,25 @@ def main() -> int:
     best_t = 0.45
     best_f1 = -1.0
     for threshold in training_cfg.get("evidence_threshold_grid", [0.45]):
-        metrics = evaluate_internal(model, val_loader, device, evidence_threshold=float(threshold), loss_weights=loss_weights)
+        metrics = evaluate_internal(
+            model,
+            val_loader,
+            device,
+            evidence_threshold=float(threshold),
+            top_k=top_k,
+            loss_weights=loss_weights,
+        )
         if metrics["evidence_f1"] > best_f1:
             best_f1 = metrics["evidence_f1"]
             best_t = float(threshold)
-    final_val = evaluate_internal(model, val_loader, device, evidence_threshold=best_t, loss_weights=loss_weights)
+    final_val = evaluate_internal(
+        model,
+        val_loader,
+        device,
+        evidence_threshold=best_t,
+        top_k=top_k,
+        loss_weights=loss_weights,
+    )
     checkpoint = final_checkpoint_path
     run_manifest = {
         "schema": "rallymotionreasoner.run.v1",
@@ -302,6 +317,7 @@ def main() -> int:
             "visual_feature_dim": int(cfg.get("feature_extraction", {}).get("feature_dim", 800)),
             "motion_feature_dim": int(model.motion_feature_dim),
             "time_bias_version": model.graph.time_bias_version,
+            "top_k": top_k,
             "thresholds": {"evidence_threshold": best_t},
             "config": cfg,
             "architecture": cfg.get("architecture", "RallyMotionReasoner-RGR"),

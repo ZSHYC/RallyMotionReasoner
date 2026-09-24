@@ -11,6 +11,7 @@ data:
   max_question_tokens: 64
   max_node_tokens: 24
   max_strokes: 32
+  top_k: 8
   min_count: 1
   label_map_source: train
   evidence_frame_tolerance: 16

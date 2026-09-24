@@ -35,7 +35,9 @@ def compute_loss(outputs: dict[str, Tensor], batch: dict[str, Any], loss_weights
     if "ball_xy" in outputs and float(weights.get("ball_xy", 0.0)) > 0:
         loss = loss + float(weights.get("ball_xy", 0.0)) * masked_smooth_l1(outputs["ball_xy"], batch["ball_xy"], batch["ball_mask"])
     if "ball_visible_logits" in outputs and float(weights.get("ball_visible", 0.0)) > 0:
-        loss = loss + float(weights.get("ball_visible", 0.0)) * masked_bce(outputs["ball_visible_logits"], batch["ball_visible"], batch["ball_mask"])
+        loss = loss + float(weights.get("ball_visible", 0.0)) * masked_bce(
+            outputs["ball_visible_logits"], batch["ball_visible"], batch["ball_visible_mask"]
+        )
     if "contact_frame" in outputs and float(weights.get("contact_frame", 0.0)) > 0:
         loss = loss + float(weights.get("contact_frame", 0.0)) * masked_smooth_l1(outputs["contact_frame"], batch["contact_frame"], batch["contact_mask"])
     for name, labels in batch["labels"].items():

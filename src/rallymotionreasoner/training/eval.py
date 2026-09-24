@@ -59,8 +59,11 @@ def evaluate_internal(
     device: torch.device,
     *,
     evidence_threshold: float = 0.45,
+    top_k: int = 8,
     loss_weights: dict[str, float] | None = None,
 ) -> dict[str, float]:
+    if top_k <= 0:
+        raise ValueError("top_k must be positive")
     model.eval()
     total = 0
     evidence_f1 = 0.0
@@ -82,12 +85,15 @@ def evaluate_internal(
         key_prob = torch.sigmoid(outputs["key_action_logits"]).detach().cpu()
         for i, item in enumerate(batch["items"]):
             n = len(item.shot_ids)
-            pred_ev = {item.shot_ids[j] for j in range(n) if float(ev_prob[i, j]) >= evidence_threshold}
+            order = sorted(range(n), key=lambda index: float(ev_prob[i, index]), reverse=True)[:top_k]
+            pred_ev = {item.shot_ids[j] for j in order if float(ev_prob[i, j]) >= evidence_threshold}
             gold_ev = {sid for sid, target in zip(item.shot_ids, item.evidence_targets) if target > 0.5}
             evidence_f1 += prf(pred_ev, gold_ev)[2]
-            pred_key = {item.shot_ids[j] for j in range(n) if float(key_prob[i, j]) >= 0.5}
-            if not pred_key:
-                pred_key = {item.shot_ids[int(torch.argmax(key_prob[i, :n]))]}
+            pred_key = {
+                item.shot_ids[j]
+                for j in order
+                if float(ev_prob[i, j]) >= evidence_threshold and float(key_prob[i, j]) >= 0.5
+            }
             gold_key = {sid for sid, target in zip(item.shot_ids, item.key_targets) if target > 0.5}
             key_acc += 1.0 if pred_key == gold_key else 0.0
             key_f1 += prf(pred_key, gold_key)[2]

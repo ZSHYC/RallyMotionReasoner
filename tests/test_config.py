@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from rallymotionreasoner.config import load_paths
 from rallymotionreasoner.configs import load_graph_reasoner_config, resume_config_matches, saved_time_bias_version
 
@@ -31,6 +33,15 @@ def test_legacy_trainer_config_can_resume_only_across_time_bucket_version(tmp_pa
 
     assert load_graph_reasoner_config(legacy_path)["model"]["time_bias_version"] == 2
     assert resume_config_matches(legacy, current)
+    without_top_k = {**legacy, "data": {key: value for key, value in legacy["data"].items() if key != "top_k"}}
+    assert resume_config_matches(without_top_k, current)
+    assert resume_config_matches(without_top_k, without_top_k)
     assert not resume_config_matches({**legacy, "model": {**legacy["model"], "hidden_dim": 128}}, current)
     assert saved_time_bias_version({"config": legacy}) == 1
     assert saved_time_bias_version({"config": current}) == 2
+
+
+@pytest.mark.parametrize("top_k", [0, 33])
+def test_graph_reasoner_rejects_candidates_exceeding_qwen_frame_budget(top_k: int) -> None:
+    with pytest.raises(ValueError, match="data.top_k must be between 1 and 32"):
+        load_graph_reasoner_config(Path("configs/rallymotionreasoner.yaml"), [f"data.top_k={top_k}"])

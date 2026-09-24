@@ -9,6 +9,7 @@ from rallymotionreasoner.configs import saved_time_bias_version
 from rallymotionreasoner.data import GraphQADataset, collate, move_batch
 from rallymotionreasoner.data.graph_qa import safe_feature_name
 from rallymotionreasoner.event_detection.features import shot_feature_payload
+from rallymotionreasoner.generation.qwen import QWEN_SAMPLING_CONTRACT
 from rallymotionreasoner.graph_reasoning.model import RallyGraphReasoner
 
 
@@ -20,7 +21,7 @@ class RGRCheckpointSelector:
         checkpoint: Path,
         *,
         device: str | None = None,
-        top_k: int = 8,
+        top_k: int | None = None,
         event_backend: str = "motion_region",
     ) -> None:
         import torch
@@ -38,7 +39,11 @@ class RGRCheckpointSelector:
         if bool(cfg.get("data", {}).get("include_label_tokens", True)):
             raise ValueError("RGR main selector refuses checkpoints that consume event label text")
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.top_k = int(top_k)
+        self.top_k = int(self.state.get("top_k", 8))
+        if not 1 <= self.top_k <= QWEN_SAMPLING_CONTRACT["max_frames"]:
+            raise ValueError(f"RGR top_k must be between 1 and {QWEN_SAMPLING_CONTRACT['max_frames']}")
+        if top_k is not None and int(top_k) != self.top_k:
+            raise ValueError("RGR top_k override does not match the checkpoint contract")
         self.evidence_threshold = float(self.state["thresholds"]["evidence_threshold"])
         self.last_predictions: dict[str, str | None] = {}
         model_cfg = self.state.get("config", {}).get("feature_extraction", {})
