@@ -27,14 +27,18 @@ def _sft_video_timing(
 
 
 def validate_sft_generation_contract(row: dict[str, Any]) -> None:
-    messages = structured_video_messages(row, include_answer=False)
+    source = row.get("messages") or []
+    if any(item.get("role") == "system" for item in source):
+        raise ValueError(f"Qwen SFT system messages are incompatible with online generation: {row.get('qa_id')}")
+    messages = structured_video_messages(row, include_answer=True)
     frames = row["videos"][0]
     if len(frames) > QWEN_SAMPLING_CONTRACT["max_frames"]:
         raise ValueError(
             f"Qwen SFT row exceeds the {QWEN_SAMPLING_CONTRACT['max_frames']}-frame contract: {row.get('qa_id')}"
         )
     frame_indices, _ = _sft_video_timing(row, frame_count=len(frames), required=True)
-    user = str(messages[-1]["content"][-1]["text"])
+    user_message = next(item for item in messages if item["role"] == "user")
+    user = str(user_message["content"][-1]["text"])
     if not user.startswith(QWEN_PROMPT_HEADER) or QWEN_CANDIDATES_MARKER not in user:
         raise ValueError(f"Qwen SFT prompt contract mismatch: {row.get('qa_id')}")
     question, _, tail = user[len(QWEN_PROMPT_HEADER) :].partition(QWEN_CANDIDATES_MARKER)
@@ -62,6 +66,22 @@ def validate_sft_generation_contract(row: dict[str, Any]) -> None:
     sampled_frames = set(frame_indices or [])
     if any(int(candidate["frame"]) not in sampled_frames for candidate in candidates):
         raise ValueError(f"Qwen SFT candidate frames must occur in video_frame_indices: {row.get('qa_id')}")
+    target = json.loads(str(messages[-1]["content"]))
+    candidate_frames = {int(candidate["shot_id"]): int(candidate["frame"]) for candidate in candidates}
+    evidence_ids = target["evidence_shot_ids"]
+    if any(shot_id not in candidate_frames for shot_id in evidence_ids):
+        raise ValueError(f"Qwen SFT evidence IDs must occur in prompt candidates: {row.get('qa_id')}")
+    if target["evidence_frames"] != [candidate_frames[shot_id] for shot_id in evidence_ids]:
+        raise ValueError(f"Qwen SFT evidence frames must match prompt candidates: {row.get('qa_id')}")
+    if target["answerability"] != "unanswerable" and not evidence_ids:
+        raise ValueError(f"Qwen SFT answerable targets require prompt evidence: {row.get('qa_id')}")
+    if not evidence_ids and (
+        target["answer"] != ""
+        or any(target[level] is not None for level in ("level_1", "level_2", "level_3"))
+        or target["observed_effect"] != "unknown"
+        or target["causal_strength"] != "insufficient"
+    ):
+        raise ValueError(f"Qwen SFT targets without evidence must match online abstention: {row.get('qa_id')}")
 
 
 def structured_video_messages(row: dict[str, Any], *, include_answer: bool) -> list[dict[str, Any]]:
@@ -95,7 +115,11 @@ def structured_video_messages(row: dict[str, Any], *, include_answer: bool) -> l
         except json.JSONDecodeError as exc:
             raise ValueError(f"Qwen SFT assistant target is not JSON: {row.get('qa_id')}") from exc
         allowed = set(REQUIRED_SCHEMA) | set(OPTIONAL_SCHEMA)
-        if not isinstance(payload, dict) or not set(REQUIRED_SCHEMA).issubset(payload) or not set(payload).issubset(allowed):
+        if (
+            not isinstance(payload, dict)
+            or not set(REQUIRED_SCHEMA).issubset(payload)
+            or not set(payload).issubset(allowed)
+        ):
             raise ValueError(f"Qwen SFT assistant schema mismatch: {row.get('qa_id')}")
         violations = validate_prediction_payload(payload)
         if violations:

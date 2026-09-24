@@ -41,7 +41,7 @@ The evidence router scores candidate strokes and key actions for a tactical ques
 
 - Python 3.10 or newer
 - PyTorch 2.1 or newer
-- OpenCV and DINOv3 dependencies for video event extraction
+- OpenCV, `ffprobe`, and DINOv3 dependencies for raw-video event extraction
 - CUDA is recommended for model inference and required by most large-model training setups
 
 Install the package and optional training dependencies:
@@ -63,7 +63,7 @@ cp configs/paths.example.yaml configs/paths.local.yaml
 
 ## Inputs
 
-A ball trajectory can be a TrackNet JSON payload or a CSV file. The trajectory loader normalizes both formats into the same temporal representation. The event expert directory must contain:
+A ball trajectory can be a TrackNet JSON payload or a CSV file. Trajectory frames must be ordered and finite, with coordinates inside the track's declared source dimensions. Raw-video inputs also check those dimensions against the decoded video. Raw videos must have constant frame rate; decoded frames are stored temporarily as lossless PNGs. A frame directory requires an explicit `--fps` and may contain resized copies of the source frames. The event expert directory must contain:
 
 ```text
 region-experts/
@@ -152,7 +152,7 @@ PYTHONPATH=src torchrun --nproc-per-node=8 scripts/train_qwen_lora.py \
   --report outputs/qwen_lora.json
 ```
 
-Training requires locally prepared data and model weights. Qwen SFT rows contain one frame-list video, a canonical predicted-candidate prompt, original video frame indices and FPS, and candidate centers included in those frames. The data report must cover both splits and declare the 32-frame sampling policy. Qwen adapters carry that prompt, sampling, and source-timing contract in their manifest.
+Training requires locally prepared data and model weights. Qwen SFT rows contain one frame-list video, a canonical predicted-candidate prompt without a system message, original video frame indices and FPS, and candidate centers included in those frames. Assistant evidence IDs and frames must match prompt candidates. The data report must cover both splits and declare the 32-frame sampling policy. Qwen adapters carry that prompt, sampling, and source-timing contract in their manifest; resumed training also checks the data paths and effective row counts.
 
 ## Repository layout
 

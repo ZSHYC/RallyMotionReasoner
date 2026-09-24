@@ -114,7 +114,9 @@ def _validate_rows(
             raise ValueError(f"Qwen {label} row track mismatch for {qa_id}: {actual_track} != {expected_track}")
         metadata = row.get("e2e_metadata") or {}
         if metadata.get("split") != expected_split:
-            raise ValueError(f"Qwen {label} row split mismatch for {qa_id}: {metadata.get('split')} != {expected_split}")
+            raise ValueError(
+                f"Qwen {label} row split mismatch for {qa_id}: {metadata.get('split')} != {expected_split}"
+            )
         if metadata.get("media_mode") != "videos" or list(metadata.get("schema_fields") or []) != list(REQUIRED_SCHEMA):
             raise ValueError(f"Qwen {label} row media/schema contract mismatch for {qa_id}")
         if metadata.get("graph_source") != "motion_region_predicted":
@@ -124,6 +126,14 @@ def _validate_rows(
             if missing:
                 raise FileNotFoundError(f"Qwen {label} row has missing frames for {qa_id}: {missing[:3]}")
     return ids
+
+
+def _validate_resume_data_contract(manifest: dict[str, Any], expected: dict[str, Any]) -> None:
+    if manifest.get("data_contract") != expected:
+        raise ValueError(
+            f"Qwen resume data contract mismatch: "
+            f"{{'checkpoint': {manifest.get('data_contract')!r}, 'current': {expected!r}}}"
+        )
 
 
 def _validation_loss(
@@ -217,6 +227,7 @@ def _save_checkpoint(
                     "world_size": int(manifest_base["world_size"]),
                     "seed": int(manifest_base["seed"]),
                     "track": str(manifest_base["track"]),
+                    "data_contract": dict(manifest_base["data_contract"]),
                     "training_contract": dict(manifest_base["training_contract"]),
                 },
                 staging / "trainer_state.pt",
@@ -260,6 +271,9 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
+    if args.save_steps <= 0:
+        parser.error("--save-steps must be greater than zero")
+
     for label, path in (
         ("model", args.model),
         ("train", args.train_data),
@@ -270,6 +284,7 @@ def main() -> int:
             raise FileNotFoundError(f"missing Qwen {label}: {path}")
     train_rows = read_jsonl(args.train_data)
     val_rows = read_jsonl(args.val_data)
+    source_train_rows, source_val_rows = len(train_rows), len(val_rows)
     track = TRACK_GRAPH_ASSISTED_PRED
     launch_rank = int(os.environ.get("RANK", "0"))
     _validate_data_report(
@@ -284,6 +299,17 @@ def main() -> int:
         train_rows = train_rows[: args.max_train_rows]
     if args.max_val_rows:
         val_rows = val_rows[: args.max_val_rows]
+    data_contract = {
+        "train_data": str(args.train_data.resolve()),
+        "val_data": str(args.val_data.resolve()),
+        "data_report": str(args.data_report.resolve()),
+        "source_train_rows": source_train_rows,
+        "source_val_rows": source_val_rows,
+        "max_train_rows": args.max_train_rows,
+        "max_val_rows": args.max_val_rows,
+        "effective_train_rows": len(train_rows),
+        "effective_val_rows": len(val_rows),
+    }
     # Validate media paths once on rank 0 to avoid redundant distributed I/O.
     train_ids = _validate_rows(
         train_rows,
@@ -302,6 +328,16 @@ def main() -> int:
     overlap = train_ids & val_ids
     if overlap:
         raise ValueError(f"Qwen train/val qa_id leakage: {sorted(overlap)[:10]}")
+    resume_checkpoint = _latest_checkpoint(args.output_dir) if args.resume else None
+    if args.resume:
+        if resume_checkpoint is None:
+            raise FileNotFoundError(f"Qwen resume checkpoint not found in: {args.output_dir}")
+        resume_manifest = load_qwen_adapter_manifest(
+            resume_checkpoint,
+            expected_track=track,
+            expected_base_model=args.model,
+        )
+        _validate_resume_data_contract(resume_manifest, data_contract)
     dry_report = {
         "status": "DRY_RUN" if args.dry_run else "READY_TO_TRAIN",
         "schema": "rallymotionreasoner.qwen_native_training_report.v1",
@@ -309,12 +345,16 @@ def main() -> int:
         "train_rows": len(train_rows),
         "val_rows": len(val_rows),
         "data_report": str(args.data_report),
+        "data_contract": data_contract,
         "distributed_backend": "torch_ddp",
         "gold_events_allowed": False,
     }
     if args.dry_run:
         print(json.dumps(dry_report, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
+
+    if args.output_dir.exists() and any(args.output_dir.iterdir()) and not args.resume:
+        raise FileExistsError(f"non-empty Qwen output directory has no resumable checkpoint: {args.output_dir}")
 
     import torch
     import torch.distributed as dist
@@ -339,20 +379,13 @@ def main() -> int:
         args.output_dir.mkdir(parents=True, exist_ok=args.resume)
     if distributed:
         dist.barrier()
-    resume_checkpoint = _latest_checkpoint(args.output_dir) if args.resume else None
-    if args.output_dir.exists() and any(args.output_dir.iterdir()) and resume_checkpoint is None:
-        raise FileExistsError(f"non-empty Qwen output directory has no resumable checkpoint: {args.output_dir}")
-
-    if resume_checkpoint:
-        load_qwen_adapter_manifest(
-            resume_checkpoint,
-            expected_track=track,
-            expected_base_model=args.model,
-        )
-
     processor = AutoProcessor.from_pretrained(str(args.model), local_files_only=True, trust_remote_code=True)
     base = Qwen3VLForConditionalGeneration.from_pretrained(
-        str(args.model), local_files_only=True, trust_remote_code=True, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True
+        str(args.model),
+        local_files_only=True,
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True,
     )
     if resume_checkpoint:
         model = PeftModel.from_pretrained(base, str(resume_checkpoint), is_trainable=True)
@@ -377,9 +410,17 @@ def main() -> int:
     trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
     if not trainable:
         raise RuntimeError("native Qwen LoRA has no trainable parameters")
-    training_model: Any = DistributedDataParallel(
-        model, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False, find_unused_parameters=False
-    ) if distributed else model
+    training_model: Any = (
+        DistributedDataParallel(
+            model,
+            device_ids=[local_rank],
+            output_device=local_rank,
+            broadcast_buffers=False,
+            find_unused_parameters=False,
+        )
+        if distributed
+        else model
+    )
     optimizer = torch.optim.AdamW(trainable, lr=args.learning_rate)
     per_rank_steps = math.ceil(len(train_rows) / world_size)
     optimizer_steps_per_epoch = math.ceil(per_rank_steps / args.gradient_accumulation_steps)
@@ -394,6 +435,7 @@ def main() -> int:
             "world_size": world_size,
             "seed": args.seed,
             "track": track,
+            "data_contract": data_contract,
             "training_contract": {
                 "epochs": args.epochs,
                 "learning_rate": args.learning_rate,
@@ -436,6 +478,7 @@ def main() -> int:
         "world_size": world_size,
         "provenance_contract": "predicted_event+rgr_checkpoint",
         "generation_contract": QWEN_GENERATION_CONTRACT,
+        "data_contract": data_contract,
         "training_contract": {
             "epochs": args.epochs,
             "learning_rate": args.learning_rate,
@@ -460,9 +503,7 @@ def main() -> int:
             if iteration < begin:
                 continue
             boundary = (iteration + 1) % args.gradient_accumulation_steps == 0 or iteration + 1 == len(indices)
-            synchronization = (
-                training_model.no_sync() if distributed and not boundary else nullcontext()
-            )
+            synchronization = training_model.no_sync() if distributed and not boundary else nullcontext()
             group_start = (iteration // args.gradient_accumulation_steps) * args.gradient_accumulation_steps
             group_size = min(args.gradient_accumulation_steps, len(indices) - group_start)
             with synchronization:
@@ -483,9 +524,17 @@ def main() -> int:
                     next_epoch = epoch + 1 if iteration + 1 == len(indices) else epoch
                     next_iteration = 0 if next_epoch != epoch else iteration + 1
                     latest = _save_checkpoint(
-                        training_model, processor, optimizer, scheduler, args.output_dir, rank=rank,
-                        distributed=distributed, global_step=global_step, next_epoch=next_epoch,
-                        next_iteration=next_iteration, manifest_base=manifest_base,
+                        training_model,
+                        processor,
+                        optimizer,
+                        scheduler,
+                        args.output_dir,
+                        rank=rank,
+                        distributed=distributed,
+                        global_step=global_step,
+                        next_epoch=next_epoch,
+                        next_iteration=next_iteration,
+                        manifest_base=manifest_base,
                     )
         if distributed:
             dist.all_reduce(loss_sum)
@@ -505,9 +554,17 @@ def main() -> int:
             {"epoch": epoch, "train_loss": float((loss_sum / seen.clamp_min(1)).cpu()), "val_loss": val_loss}
         )
         latest = _save_checkpoint(
-            training_model, processor, optimizer, scheduler, args.output_dir, rank=rank,
-            distributed=distributed, global_step=global_step, next_epoch=epoch + 1,
-            next_iteration=0, manifest_base=manifest_base,
+            training_model,
+            processor,
+            optimizer,
+            scheduler,
+            args.output_dir,
+            rank=rank,
+            distributed=distributed,
+            global_step=global_step,
+            next_epoch=epoch + 1,
+            next_iteration=0,
+            manifest_base=manifest_base,
         )
         resume_iteration = 0
     if rank == 0:

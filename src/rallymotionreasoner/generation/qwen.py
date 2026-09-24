@@ -105,10 +105,9 @@ def _prepare_qwen3_vision_inputs(
     }
 
 
-def _ground_qwen_evidence(
-    prediction: dict[str, Any], candidates: list[dict[str, Any]]
-) -> dict[str, Any]:
+def _ground_qwen_evidence(prediction: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
     grounded = dict(prediction)
+    claimed_answerability = grounded.get("answerability")
     allowed = {int(item["shot_id"]) for item in candidates}
     for field in ("evidence_shot_ids", "key_action_shot_ids"):
         values = grounded.get(field) if isinstance(grounded.get(field), list) else []
@@ -120,7 +119,7 @@ def _ground_qwen_evidence(
     ]
     by_id = {int(item["shot_id"]): item for item in candidates}
     grounded["evidence_frames"] = [int(by_id[shot_id]["frame"]) for shot_id in grounded["evidence_shot_ids"]]
-    if grounded.get("answerability") != "unanswerable" and not grounded["evidence_shot_ids"]:
+    if not grounded["evidence_shot_ids"]:
         grounded.update(
             answer="",
             level_1=None,
@@ -129,9 +128,12 @@ def _ground_qwen_evidence(
             observed_effect="unknown",
             causal_strength="insufficient",
             answerability="unanswerable",
-            explanation="The generated answer did not cite a valid evidence candidate.",
-            generation_error="invalid_evidence",
         )
+        if claimed_answerability != "unanswerable" and not grounded.get("parse_error"):
+            grounded.update(
+                explanation="The generated answer did not cite a valid evidence candidate.",
+                generation_error="invalid_evidence",
+            )
     return grounded
 
 
@@ -201,7 +203,9 @@ class QwenVideoBackend:
         except ImportError:
             from transformers import AutoModelForImageTextToText as ModelClass
         self.torch = torch
-        self.processor = AutoProcessor.from_pretrained(str(self.model_path), local_files_only=True, trust_remote_code=True)
+        self.processor = AutoProcessor.from_pretrained(
+            str(self.model_path), local_files_only=True, trust_remote_code=True
+        )
         dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
         self.model = ModelClass.from_pretrained(
             str(self.model_path),
@@ -212,6 +216,7 @@ class QwenVideoBackend:
         ).eval()
         if adapter:
             from peft import PeftModel
+
             self.model = PeftModel.from_pretrained(self.model, str(adapter), is_trainable=False).eval()
             self.adapter = str(adapter)
 
@@ -230,7 +235,15 @@ class QwenVideoBackend:
         if self.adapter_manifest is not None:
             _validate_video_timing(len(frame_paths), frame_indices, fps, required=True)
         prompt = qwen_prompt(question, candidates)
-        messages = [{"role": "user", "content": [{"type": "video", "video": [str(path) for path in frame_paths]}, {"type": "text", "text": prompt}]}]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video", "video": [str(path) for path in frame_paths]},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         try:
             processor_kwargs = _prepare_qwen3_vision_inputs(

@@ -83,6 +83,29 @@ def test_invalid_qwen_evidence_forces_abstention() -> None:
     assert grounded["generation_error"] == "invalid_evidence"
 
 
+def test_unanswerable_qwen_output_cannot_retain_an_answer() -> None:
+    payload = _prediction()
+    payload.update(
+        answerability="unanswerable",
+        evidence_shot_ids=[],
+        key_action_shot_ids=[],
+        evidence_frames=[],
+    )
+
+    grounded = _ground_qwen_evidence(payload, [{"shot_id": 2, "frame": 12}])
+
+    assert grounded["answer"] == ""
+    assert grounded["level_1"] is None
+    assert grounded["level_2"] is None
+    assert grounded["level_3"] is None
+    assert "generation_error" not in grounded
+
+    payload["parse_error"] = "invalid_qwen_json"
+    grounded = _ground_qwen_evidence(payload, [{"shot_id": 2, "frame": 12}])
+    assert grounded["parse_error"] == "invalid_qwen_json"
+    assert "generation_error" not in grounded
+
+
 def test_qwen3_vision_inputs_preserve_original_frame_timing(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
 
@@ -121,9 +144,7 @@ def test_qwen3_vision_inputs_keep_default_timing_without_source_metadata(monkeyp
     monkeypatch.setitem(
         sys.modules,
         "qwen_vl_utils",
-        SimpleNamespace(
-            process_vision_info=lambda *args, **kwargs: (None, [("video", default_metadata)], {})
-        ),
+        SimpleNamespace(process_vision_info=lambda *args, **kwargs: (None, [("video", default_metadata)], {})),
     )
 
     processor_kwargs = _prepare_qwen3_vision_inputs([], frame_count=2)
@@ -169,10 +190,19 @@ def test_sft_video_timing_uses_e2e_metadata_only_when_complete() -> None:
 
 def test_new_sft_rows_match_inference_prompt_and_timing_contract() -> None:
     candidates = [{"shot_id": 2, "frame": 12}]
+    target = _prediction()
+    target.update(
+        evidence_shot_ids=[2],
+        key_action_shot_ids=[2],
+        evidence_frames=[12],
+    )
     row = {
         "qa_id": "qa-1",
         "videos": [["a.jpg", "b.jpg"]],
-        "messages": [{"role": "user", "content": qwen_prompt("What changed?", candidates)}],
+        "messages": [
+            {"role": "user", "content": qwen_prompt("What changed?", candidates)},
+            {"role": "assistant", "content": json.dumps(target)},
+        ],
         "e2e_metadata": {"video_frame_indices": [4, 12], "video_fps": 30.0},
     }
 
@@ -190,6 +220,73 @@ def test_new_sft_rows_match_inference_prompt_and_timing_contract() -> None:
     row["e2e_metadata"] = {"video_frame_indices": [4, 11], "video_fps": 30.0}
     with pytest.raises(ValueError, match="candidate frames"):
         validate_sft_generation_contract(row)
+
+
+def test_sft_target_must_match_online_prompt_evidence_contract() -> None:
+    candidates = [{"shot_id": 2, "frame": 12}]
+    target = _prediction()
+    target.update(evidence_shot_ids=[2], key_action_shot_ids=[2], evidence_frames=[12])
+    row = {
+        "qa_id": "qa-1",
+        "videos": [["a.jpg"]],
+        "messages": [
+            {"role": "user", "content": qwen_prompt("What changed?", candidates)},
+            {"role": "assistant", "content": json.dumps(target)},
+        ],
+        "e2e_metadata": {"video_frame_indices": [12], "video_fps": 30.0},
+    }
+
+    row["messages"].insert(0, {"role": "system", "content": "Use hidden training instructions."})
+    with pytest.raises(ValueError, match="system messages"):
+        validate_sft_generation_contract(row)
+    row["messages"].pop(0)
+
+    target["evidence_shot_ids"] = [999]
+    target["key_action_shot_ids"] = [999]
+    target["evidence_frames"] = [12]
+    row["messages"][-1]["content"] = json.dumps(target)
+    with pytest.raises(ValueError, match="evidence IDs"):
+        validate_sft_generation_contract(row)
+
+    target["evidence_shot_ids"] = [2]
+    target["key_action_shot_ids"] = [2]
+    target["evidence_frames"] = [13]
+    row["messages"][-1]["content"] = json.dumps(target)
+    with pytest.raises(ValueError, match="evidence frames"):
+        validate_sft_generation_contract(row)
+
+    target["evidence_frames"] = [12]
+    target["key_action_shot_ids"] = [999]
+    row["messages"][-1]["content"] = json.dumps(target)
+    with pytest.raises(ValueError, match="subset of evidence_shot_ids"):
+        validate_sft_generation_contract(row)
+
+    target["evidence_shot_ids"] = []
+    target["key_action_shot_ids"] = []
+    target["evidence_frames"] = []
+    row["messages"][-1]["content"] = json.dumps(target)
+    with pytest.raises(ValueError, match="answerable targets"):
+        validate_sft_generation_contract(row)
+
+    target["answerability"] = "unanswerable"
+    row["messages"][-1]["content"] = json.dumps(target)
+    with pytest.raises(ValueError, match="without evidence must match online abstention"):
+        validate_sft_generation_contract(row)
+
+    target.update(
+        answer="",
+        level_1=None,
+        level_2=None,
+        level_3=None,
+        observed_effect="unknown",
+        causal_strength="insufficient",
+    )
+    row["messages"][-1]["content"] = json.dumps(target)
+    validate_sft_generation_contract(row)
+
+    target.update(evidence_shot_ids=[2], evidence_frames=[12], answer="The evidence remains inconclusive.")
+    row["messages"][-1]["content"] = json.dumps(target)
+    validate_sft_generation_contract(row)
 
 
 def test_qwen_adapter_requires_generation_contract_and_preserves_base_model(tmp_path) -> None:
@@ -261,6 +358,50 @@ def test_qwen_training_cli_requires_data_report() -> None:
 
     assert result.returncode == 2
     assert "--data-report" in result.stderr
+
+
+def test_qwen_training_cli_rejects_nonpositive_save_steps() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/train_qwen_lora.py",
+            "--model",
+            "model",
+            "--train-data",
+            "train.jsonl",
+            "--val-data",
+            "val.jsonl",
+            "--output-dir",
+            "out",
+            "--report",
+            "report.json",
+            "--data-report",
+            "data-report.json",
+            "--save-steps",
+            "0",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "--save-steps must be greater than zero" in result.stderr
+
+
+def test_qwen_resume_requires_identical_data_contract() -> None:
+    validate_resume = runpy.run_path("scripts/train_qwen_lora.py")["_validate_resume_data_contract"]
+    contract = {
+        "train_data": "/data/train.jsonl",
+        "val_data": "/data/val.jsonl",
+        "data_report": "/data/report.json",
+        "effective_train_rows": 8,
+        "effective_val_rows": 2,
+    }
+
+    validate_resume({"data_contract": contract}, contract)
+    with pytest.raises(ValueError, match="resume data contract mismatch"):
+        validate_resume({"data_contract": {**contract, "effective_train_rows": 7}}, contract)
 
 
 def test_qwen_data_report_must_cover_every_sft_row(tmp_path) -> None:
