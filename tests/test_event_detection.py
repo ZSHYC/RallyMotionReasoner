@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import torch
 
 from rallymotionreasoner.data.graph_qa import load_motion_features, load_visual_features
@@ -7,7 +8,7 @@ from rallymotionreasoner.event_detection.decoder import DecodedEvent
 from rallymotionreasoner.event_detection.features import EVENT_FEATURE_DIM, MOTION_DIM, VISUAL_DIM, shot_feature_payload
 from rallymotionreasoner.event_detection.graph import build_predicted_graph
 from rallymotionreasoner.event_detection.model import MotionRegionEventModel, TrajectoryExpert, VisualExpert
-from rallymotionreasoner.event_detection.runtime import _decode
+from rallymotionreasoner.event_detection.runtime import _decode, _scores
 
 
 def test_event_feature_dimensions_match_pipeline() -> None:
@@ -106,7 +107,38 @@ def test_experts_batch_complete_rows_when_edge_padding_is_mixed() -> None:
             torch.testing.assert_close(pooled[index], expected_pool[0])
 
 
-def test_decode_uses_one_fps_scaled_suppression_window_for_both_types() -> None:
-    scores = torch.tensor([[0.90, 0.85], [0.10, 0.80], [0.10, 0.70]])
-    events = _decode(scores, [100, 109, 111], fps=50.0, threshold=0.4, radius=5)
-    assert [(event.frame, event.event_type) for event in events] == [(100, "hit"), (111, "bounce")]
+def test_scores_preserve_fixed_zero_padded_edge_windows() -> None:
+    class Expert:
+        def __init__(self) -> None:
+            self.inputs: list[torch.Tensor] = []
+
+        def __call__(self, values: torch.Tensor) -> dict[str, torch.Tensor]:
+            self.inputs.append(values)
+            return {
+                "eventness_logit": torch.zeros(len(values)),
+                "type_logits": torch.zeros(len(values), 2),
+            }
+
+    contract = {"window_span_seconds": 0.4, "window_radius": 2}
+    times = torch.tensor([0.0, 0.1, 0.2], dtype=torch.float64)
+    expert = Expert()
+    _scores(expert, torch.ones(3, 10), times, contract, torch.device("cpu"), trajectory=True)
+    assert expert.inputs[0].shape == (3, 5, 11)
+    assert torch.count_nonzero(expert.inputs[0][0, :2]) == 0
+    assert torch.count_nonzero(expert.inputs[0][-1, -2:]) == 0
+
+
+def test_decode_uses_per_type_frame_radius_including_boundary() -> None:
+    scores = torch.tensor([[0.90, 0.85], [0.80, 0.75], [0.70, 0.10]])
+    events = _decode(scores, [100, 105, 106], fps=50.0, threshold=0.4, radius=5)
+    assert [(event.frame, event.event_type) for event in events] == [
+        (100, "bounce"),
+        (100, "hit"),
+        (106, "hit"),
+    ]
+
+
+def test_decode_rejects_non_finite_scores() -> None:
+    scores = torch.tensor([[float("nan"), float("inf")], [float("-inf"), 0.8], [0.9, 0.1]])
+    with pytest.raises(ValueError, match="finite"):
+        _decode(scores, [0, 6, 12], fps=25.0, threshold=0.4, radius=5)

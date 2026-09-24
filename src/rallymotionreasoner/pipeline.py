@@ -90,7 +90,7 @@ class RallyMotionReasoner:
         with materialize_video(video, fps=fps) as media:
             if isinstance(ball_track, str | Path):
                 ball_track = load_track_payload(Path(ball_track))
-            runtime = self.event.predict(media.frame_paths, fps=media.fps, ball_track=ball_track)
+            runtime = self.event.predict(media.frame_paths, fps=media.fps, ball_track=ball_track, video_size=media.source_size)
             events = runtime.events
             graph_source = "motion_region_predicted"
             rally_id = Path(video).stem if Path(video).is_file() else Path(video).name

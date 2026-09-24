@@ -56,6 +56,55 @@ def load_track_payload(path: Path) -> dict[str, Any]:
     return {"width": width, "height": height, "points": points, "source": "tracknet_csv"}
 
 
+def validate_track_payload(
+    track: dict[str, Any], frame_indices: list[int], *, width: int | None = None, height: int | None = None
+) -> None:
+    """Check a JSON, CSV, or direct trajectory against its video frames."""
+    if not isinstance(track, dict) or not frame_indices:
+        raise ValueError("trajectory requires video frames and a point payload")
+    dimensions: dict[str, int] = {}
+    for key, expected in (("width", width), ("height", height)):
+        raw = track.get(key, track.get(f"image_{key}"))
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"trajectory {key} must be a positive image dimension") from exc
+        if not math.isfinite(value) or value <= 0 or not value.is_integer():
+            raise ValueError(f"trajectory {key} must be a positive image dimension")
+        if expected is not None and value != expected:
+            raise ValueError(f"trajectory {key} does not match the video: {raw} != {expected}")
+        dimensions[key] = int(value)
+    points = track.get("points")
+    if not isinstance(points, list) or not points:
+        raise ValueError("trajectory requires a non-empty points list")
+    previous = -1
+    for point in points:
+        if not isinstance(point, dict):
+            raise ValueError("trajectory point must be an object")
+        frame = point.get("frame")
+        if not isinstance(frame, int) or isinstance(frame, bool) or frame <= previous or frame > frame_indices[-1]:
+            raise ValueError("trajectory frames must be unique, ordered, and within the video")
+        previous = frame
+        if "visible" in point and not isinstance(point["visible"], bool):
+            raise ValueError("trajectory visibility must be boolean")
+        x = point.get("ball_x", point.get("x"))
+        y = point.get("ball_y", point.get("y"))
+        if (x is None) != (y is None):
+            raise ValueError("trajectory coordinates must be provided together")
+        confidence = point.get("confidence", 0.0)
+        try:
+            values = [float(confidence)] + ([] if x is None else [float(x), float(y)])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("trajectory values must be finite numbers") from exc
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("trajectory values must be finite numbers")
+        visible = point.get("visible", values[0] > 0)
+        if visible and x is None:
+            raise ValueError("visible trajectory points require coordinates")
+        if x is not None and not (0 <= values[1] < dimensions["width"] and 0 <= values[2] < dimensions["height"]):
+            raise ValueError("trajectory coordinates exceed the video frame")
+
+
 def trajectory_rows(
     track: dict[str, Any] | None,
     frame_indices: list[int],

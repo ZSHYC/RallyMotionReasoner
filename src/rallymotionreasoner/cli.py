@@ -53,6 +53,7 @@ def predict_events(args: argparse.Namespace) -> int:
             media.frame_paths,
             fps=media.fps,
             ball_track=load_track_payload(args.ball_track) if args.ball_track else None,
+            video_size=media.source_size,
         )
         payload = {
             "schema": "rallymotionreasoner.event.prediction.v1",
@@ -104,7 +105,8 @@ def export_events(args: argparse.Namespace) -> int:
         if not track_path.is_file():
             track_path = track_path.with_suffix(".csv")
         fps = float(row["fps"])
-        output = predictor.predict(frames, fps=fps, ball_track=load_track_payload(track_path))
+        video_size = (int(row["width"]), int(row["height"])) if row.get("width") and row.get("height") else None
+        output = predictor.predict(frames, fps=fps, ball_track=load_track_payload(track_path), video_size=video_size)
         graph = build_predicted_graph(
             output.events, rally_id=rally_id, frames_dir=frame_dir, fps=fps,
             num_frames=len(frames), width=row.get("width"), height=row.get("height"), split=args.split,

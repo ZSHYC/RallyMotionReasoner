@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from rallymotionreasoner.features.ball_trajectory import normalize_trajectory
+from rallymotionreasoner.features.ball_trajectory import normalize_trajectory, validate_track_payload
 
 from .decoder import DecodedEvent
 from .features import FeatureProvenance, RegionFeatureExtractor
@@ -26,8 +26,6 @@ class EventRuntimeOutput:
 
 
 EVENT_TYPES = ("hit", "bounce")
-# ponytail: the checkpoint stores a frame radius without training FPS; use 25 until its contract records FPS.
-NMS_REFERENCE_FPS = 25.0
 
 
 def _contract(payload: dict[str, Any], *, kind: str, radius: int, span: float, dimension: int) -> dict[str, Any]:
@@ -59,7 +57,7 @@ def _window_indices(times: Any, centers: Any, offsets: Any) -> tuple[Any, Any]:
     import torch
 
     targets = times[centers, None] + offsets[None, :]
-    right = times.searchsorted(targets).clamp(max=len(times) - 1)
+    right = torch.searchsorted(times, targets).clamp(max=len(times) - 1)
     left = (right - 1).clamp(min=0)
     indices = torch.where(
         (times[right] - targets).abs() < (times[left] - targets).abs(), right, left
@@ -89,10 +87,7 @@ def _scores(model: Any, rows: Any, times: Any, contract: dict[str, Any], device:
             relative = ((times[indices] - times[centers, None]) * valid).float()
             batch = torch.cat((batch, relative[..., None]), dim=-1)
         with torch.inference_mode():
-            result = model(
-                batch.to(device=device, dtype=torch.float32),
-                padding_mask=valid.to(device=device),
-            )
+            result = model(batch.to(device=device, dtype=torch.float32))
         outputs.append(
             result["eventness_logit"].sigmoid()[:, None] * result["type_logits"].softmax(dim=-1)
         )
@@ -101,7 +96,7 @@ def _scores(model: Any, rows: Any, times: Any, contract: dict[str, Any], device:
 
 def _decode(scores: Any, frames: list[int], fps: float, threshold: float, radius: int) -> list[DecodedEvent]:
     selected: list[tuple[int, int, float]] = []
-    kept: list[int] = []
+    kept = [[] for _event_type in EVENT_TYPES]
     candidates = sorted(
         (
             (int(frame), column, float(scores[index, column]))
@@ -110,11 +105,12 @@ def _decode(scores: Any, frames: list[int], fps: float, threshold: float, radius
         ),
         key=lambda item: (-item[2], item[0], item[1]),
     )
-    suppression_seconds = radius / NMS_REFERENCE_FPS
     for frame, column, score in candidates:
-        if score < threshold or any(abs(frame - previous) / fps <= suppression_seconds for previous in kept):
+        if not math.isfinite(score):
+            raise ValueError("region event scores must be finite")
+        if score < threshold or any(abs(frame - previous) <= radius for previous in kept[column]):
             continue
-        kept.append(frame)
+        kept[column].append(frame)
         selected.append((frame, column, score))
     selected.sort(key=lambda item: (item[0], EVENT_TYPES[item[1]]))
     empty_attributes = {field: None for field in ATTRIBUTE_FIELDS}
@@ -199,6 +195,7 @@ class EventPredictor:
         fps: float,
         frame_indices: list[int] | None = None,
         ball_track: dict[str, Any] | None = None,
+        video_size: tuple[int, int] | None = None,
     ) -> EventRuntimeOutput:
         import torch
 
@@ -211,6 +208,11 @@ class EventPredictor:
             raise ValueError("region event paths and frame_indices must be non-empty and aligned")
         if any(right <= left for left, right in zip(frames, frames[1:])):
             raise ValueError("region event frame_indices must be strictly increasing")
+        validate_track_payload(
+            ball_track, frames,
+            width=video_size[0] if video_size else None,
+            height=video_size[1] if video_size else None,
+        )
         base_features, (trajectory, visual), provenance = self.extractor.extract(
             paths, frame_indices=frames, fps=fps, ball_track=ball_track
         )
