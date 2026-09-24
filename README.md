@@ -6,24 +6,7 @@ The repository contains the model structure and integration code. It does not cl
 
 ## What the system does
 
-```text
-video + ball trajectory
-        │
-        ▼
-region-motion event detector
-        │  hit / bounce / timing / motion statistics
-        ▼
-tactical event graph
-        │  temporal edges + same-player edges + bounce cues
-        ▼
-RGR temporal graph reasoner
-        │  shot tokens + motion tokens + graph relations
-        ▼
-evidence router
-        │  question-conditioned evidence and key actions
-        ▼
-optional Qwen vision-language generator
-```
+![RallyMotionReasoner architecture: event detection, tactical graph, RGR reasoning, and grounded generation](assets/architecture.png)
 
 ### Event detection
 
@@ -173,6 +156,7 @@ These commands describe available interfaces only. No training or numerical repr
 ## Repository layout
 
 ```text
+assets/architecture.png         system architecture diagram
 configs/                         YAML experiment and path configuration
 scripts/train_graph_reasoner.py            RGR training entry point
 scripts/train_qwen_lora.py       Qwen LoRA training entry point
